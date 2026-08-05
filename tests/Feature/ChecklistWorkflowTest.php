@@ -22,6 +22,7 @@ use App\Services\StatisticsService;
 use App\Services\TaskCollectionResolver;
 use App\Services\WeeklyTaskScheduler;
 use Carbon\CarbonImmutable;
+use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -82,6 +83,7 @@ class ChecklistWorkflowTest extends TestCase
 
     public function test_rotations_and_checklists_share_the_server_resolved_sunday_cycle(): void
     {
+        $this->withoutMiddleware(PreventRequestForgery::class);
         RotationCycleSetting::query()->updateOrCreate(['id' => 1], ['anchor_week_start' => '2026-07-12']);
         $this->loginAdmin();
         $this->post(route('admin.collections.store'), ['name' => 'Rotation A'])->assertRedirect(route('admin.index'));
@@ -127,6 +129,21 @@ class ChecklistWorkflowTest extends TestCase
         $this->assertSame('2026-07-12', $calendar['weeks'][2]['weekStart']);
         $this->assertSame($a->id, $calendar['weeks'][2]['rotation']['id']);
         $this->assertSame($c->id, $calendar['weeks'][4]['rotation']['id']);
+
+        $augustResponse = $this->get(route('admin.index', ['rotation_month' => '2026-08']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Dashboard')
+                ->where('rotationCalendar.month', '2026-08')
+                ->has('rotationCalendar.weeks', 6));
+        $august = $augustResponse->inertiaProps('rotationCalendar');
+
+        $this->assertSame('2026-07-26', $august['weeks'][0]['weekStart']);
+        $this->assertSame($c->id, $august['weeks'][0]['rotation']['id']);
+        $this->assertSame([false, false, false, false, false, false, true], array_column($august['weeks'][0]['days'], 'inMonth'));
+        $this->assertSame('2026-08-30', $august['weeks'][5]['weekStart']);
+        $this->assertSame($b->id, $august['weeks'][5]['rotation']['id']);
+        $this->assertSame([true, true, false, false, false, false, false], array_column($august['weeks'][5]['days'], 'inMonth'));
     }
 
     public function test_rotation_snapshot_repair_rebuilds_incomplete_current_tasks_with_the_correct_rotation(): void
@@ -852,6 +869,11 @@ class ChecklistWorkflowTest extends TestCase
         $this->assertStringContainsString('rotationCalendar', $source);
         $this->assertStringContainsString('collectionCalendarWeeks', $source);
         $this->assertStringContainsString('rotation-calendar-week-label', $source);
+        $this->assertStringContainsString('collectionCalendarBandDays', $source);
+        $this->assertStringContainsString('collectionCalendarBandHasInMonthDay', $source);
+        $this->assertStringContainsString('rotation-calendar-band__segments', $source);
+        $this->assertStringContainsString('rotation-calendar-band__segment', $source);
+        $this->assertStringContainsString('collectionCalendarBandHasInMonthDay(week) && !day.inMonth', $source);
         $this->assertStringContainsString('Rotation: {{ shortCollectionName(collectionDisplayName(week.rotation)) }}', $source);
         $this->assertStringNotContainsString('Median task duration:', $source);
         $this->assertStringContainsString("adminIconPath('logout')", $source);

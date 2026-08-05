@@ -375,20 +375,28 @@ function collectionCalendarWeekLabel(week) {
     return `Week ${week.calendarWeek}`;
 }
 
+function collectionCalendarBandDays(week) {
+    return week.days.filter((day) => !day.isWeekend);
+}
+
+function collectionCalendarBandHasInMonthDay(week) {
+    return collectionCalendarBandDays(week).some((day) => day.inMonth);
+}
+
 function collectionCalendarBandTone(rotation) {
     const lightPalette = [
-        'border-sky-500/80 bg-sky-500/35 text-sky-950',
-        'border-emerald-500/80 bg-emerald-500/35 text-emerald-950',
-        'border-violet-500/80 bg-violet-500/35 text-violet-950',
-        'border-amber-500/80 bg-amber-500/35 text-amber-950',
-        'border-rose-500/80 bg-rose-500/35 text-rose-950',
+        { frame: 'border-sky-500/80 text-sky-950', fill: 'bg-sky-500/35' },
+        { frame: 'border-emerald-500/80 text-emerald-950', fill: 'bg-emerald-500/35' },
+        { frame: 'border-violet-500/80 text-violet-950', fill: 'bg-violet-500/35' },
+        { frame: 'border-amber-500/80 text-amber-950', fill: 'bg-amber-500/35' },
+        { frame: 'border-rose-500/80 text-rose-950', fill: 'bg-rose-500/35' },
     ];
     const darkPalette = [
-        'border-sky-400/80 bg-sky-500/40 text-sky-100',
-        'border-emerald-400/80 bg-emerald-500/40 text-emerald-100',
-        'border-violet-400/80 bg-violet-500/40 text-violet-100',
-        'border-amber-400/80 bg-amber-500/40 text-amber-100',
-        'border-rose-400/80 bg-rose-500/40 text-rose-100',
+        { frame: 'border-sky-400/80 text-sky-100', fill: 'bg-sky-500/40' },
+        { frame: 'border-emerald-400/80 text-emerald-100', fill: 'bg-emerald-500/40' },
+        { frame: 'border-violet-400/80 text-violet-100', fill: 'bg-violet-500/40' },
+        { frame: 'border-amber-400/80 text-amber-100', fill: 'bg-amber-500/40' },
+        { frame: 'border-rose-400/80 text-rose-100', fill: 'bg-rose-500/40' },
     ];
     const index = taskCollections.value.findIndex((collection) => Number(collection.id) === Number(rotation?.id));
     const palette = theme.value === 'light' ? lightPalette : darkPalette;
@@ -1430,7 +1438,12 @@ function chooseAdminDate(date) {
                                     <div v-for="week in collectionCalendarWeeks" :key="week.weekStart" class="rotation-calendar-week">
                                         <span class="rotation-calendar-week-label">{{ collectionCalendarWeekLabel(week) }}</span>
                                         <div v-for="day in week.days" :key="day.date" class="rotation-calendar-cell rounded-md border p-1.5" :class="[collectionCalendarDayTone(day, week.rotation), !day.inMonth ? 'opacity-55' : '']" :style="{ gridColumn: sundayIndex(day.date) + 2 }"><div class="flex items-start justify-between gap-2"><span class="text-xs font-black" :class="day.isToday ? 'text-red-600' : day.inMonth ? 'text-zinc-100' : 'text-zinc-500'">{{ day.dayNumber }}</span><span v-if="day.isToday" class="text-[9px] font-black uppercase text-red-600">Today</span></div></div>
-                                        <span v-if="week.rotation" class="rotation-calendar-band" :class="collectionCalendarBandTone(week.rotation)">Rotation: {{ shortCollectionName(collectionDisplayName(week.rotation)) }}</span>
+                                        <span v-if="week.rotation" class="rotation-calendar-band" :class="[collectionCalendarBandTone(week.rotation).frame, !collectionCalendarBandHasInMonthDay(week) ? 'opacity-55' : '']">
+                                            <span class="rotation-calendar-band__segments" aria-hidden="true">
+                                                <span v-for="day in collectionCalendarBandDays(week)" :key="`rotation-band-${day.date}`" class="rotation-calendar-band__segment" :class="[collectionCalendarBandTone(week.rotation).fill, collectionCalendarBandHasInMonthDay(week) && !day.inMonth ? 'opacity-55' : '']"></span>
+                                            </span>
+                                            <span class="rotation-calendar-band__label">Rotation: {{ shortCollectionName(collectionDisplayName(week.rotation)) }}</span>
+                                        </span>
                                     </div>
                                 </div>
                             </div>
@@ -1633,7 +1646,10 @@ function chooseAdminDate(date) {
 .rotation-calendar-week { position: relative; margin-top: .25rem; }
 .rotation-calendar-week-label { grid-column: 1; grid-row: 1; display: flex; min-height: 4.25rem; align-items: center; justify-content: center; color: rgb(161 161 170); font-size: .5625rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; writing-mode: vertical-rl; transform: rotate(180deg); }
 .rotation-calendar-cell { grid-row: 1; min-height: 4.25rem; }
-.rotation-calendar-band { z-index: 1; grid-column: 3 / span 5; grid-row: 1; align-self: end; overflow: hidden; margin: 0 .35rem .35rem; border-width: 1px; border-style: solid; border-radius: 9999px; padding: .125rem .45rem; font-size: .625rem; font-weight: 700; line-height: 1.15; text-align: center; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+.rotation-calendar-band { position: relative; z-index: 1; grid-column: 3 / span 5; grid-row: 1; align-self: end; overflow: hidden; margin: 0 .35rem .35rem; border-width: 1px; border-style: solid; border-radius: 9999px; font-size: .625rem; font-weight: 700; line-height: 1.15; pointer-events: none; }
+.rotation-calendar-band__segments { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.rotation-calendar-band__segment { min-width: 0; }
+.rotation-calendar-band__label { position: relative; z-index: 1; display: block; overflow: hidden; padding: .125rem .45rem; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .history-selected-date { display: grid; gap: .15rem; min-width: min(100%, 16rem); }
 .history-selected-date span { color: rgb(161 161 170); font-size: .7rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .history-selected-date strong { color: rgb(244 244 245); font-size: .9375rem; }
