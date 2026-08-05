@@ -74,10 +74,15 @@ const taskListFilters = ref({
 const adminTabs = [
     { key: 'statistics', label: 'Dashboard' },
     { key: 'history', label: 'View History' },
-    { key: 'audit', label: 'Audit Log' },
+    { key: 'collections', label: 'Rotations' },
     { key: 'sessions', label: 'Work Sessions' },
     { key: 'tasks', label: 'Manage Tasks' },
-    { key: 'collections', label: 'Rotations' },
+    { key: 'audit', label: 'Audit Log' },
+];
+const adminTabGroups = [
+    adminTabs.slice(0, 2),
+    adminTabs.slice(2, 5),
+    adminTabs.slice(5),
 ];
 
 const activeSessions = computed(() => props.sessions.filter((session) => session.isActive));
@@ -100,6 +105,7 @@ const manageableCollections = computed(() => taskCollections.value.filter((colle
 const collectionSchedules = computed(() => collectionItems(props.collectionSchedules));
 const defaultCollection = computed(() => taskCollections.value.find((collection) => collection.isDefault) ?? taskCollections.value[0] ?? null);
 const collectionCalendarDays = computed(() => buildCollectionCalendarDays(collectionCalendarMonth.value));
+const collectionCalendarWeeks = computed(() => buildCollectionCalendarWeeks(collectionCalendarDays.value));
 const history = computed(() => collectionItems(props.completedTasks));
 const auditLogs = computed(() => collectionItems(props.auditLogs));
 const auditLinks = computed(() => props.auditLogs?.links ?? []);
@@ -335,10 +341,6 @@ function shortCollectionName(name) {
     return name.length > 18 ? `${name.slice(0, 18)}...` : name;
 }
 
-function shouldShowCollectionCalendarPill(day) {
-    return !!day.rotation && day.date === day.weekStart;
-}
-
 function sundayIndex(value) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return 0;
     const [year, month, day] = value.split('-').map(Number);
@@ -348,6 +350,12 @@ function sundayIndex(value) {
 
 function sundayWeekStart(value) {
     return dateOffset(value, -sundayIndex(value));
+}
+
+function sundayWeekOfYear(value, year) {
+    const firstWeekStart = sundayWeekStart(`${year}-01-01`);
+
+    return Math.floor((dateOrdinal(sundayWeekStart(value)) - dateOrdinal(firstWeekStart)) / 7) + 1;
 }
 
 function dateOrdinal(value) {
@@ -375,6 +383,7 @@ function rotationCycleIndex(value, rotationCount = manageableCollections.value.l
 }
 
 function buildCollectionCalendarDays(value) {
+    const calendarYear = Number(value.slice(0, 4));
     const firstDay = monthStart(value);
     const lastDay = dateOffset(shiftMonth(value, 1) + '-01', -1);
     const gridStart = sundayWeekStart(firstDay);
@@ -390,11 +399,25 @@ function buildCollectionCalendarDays(value) {
             isWeekend: [0, 6].includes(sundayIndex(cursor)),
             weekStart: sundayWeekStart(cursor),
             rotation: rotationForDate(cursor),
-            rotationWeek: manageableCollections.value.length ? rotationCycleIndex(cursor) + 1 : null,
+            calendarWeek: sundayWeekOfYear(cursor, calendarYear),
         });
     }
 
     return days;
+}
+
+function buildCollectionCalendarWeeks(days) {
+    return Array.from({ length: Math.ceil(days.length / 7) }, (_, index) => {
+        const weekDays = days.slice(index * 7, (index + 1) * 7);
+        const sunday = weekDays[0];
+
+        return {
+            key: sunday?.weekStart ?? `week-${index}`,
+            days: weekDays,
+            rotation: sunday?.rotation ?? null,
+            calendarWeek: sunday?.calendarWeek ?? null,
+        };
+    });
 }
 
 function collectionCalendarDayTone(day) {
@@ -407,10 +430,29 @@ function collectionCalendarDayTone(day) {
         : (day.inMonth ? 'border-zinc-700 bg-zinc-900' : 'border-zinc-800 bg-zinc-950/60');
 }
 
-function collectionCalendarPillTone(day) {
-    return day.isWeekend
-        ? 'border-zinc-600 bg-zinc-800/70 text-zinc-300'
-        : collectionTone(day.rotation?.id);
+function collectionCalendarWeekLabel(week) {
+    return `Week ${week.calendarWeek}`;
+}
+
+function collectionCalendarBandTone(rotation) {
+    const lightPalette = [
+        'border-sky-500/80 bg-sky-500/35 text-sky-950',
+        'border-emerald-500/80 bg-emerald-500/35 text-emerald-950',
+        'border-violet-500/80 bg-violet-500/35 text-violet-950',
+        'border-amber-500/80 bg-amber-500/35 text-amber-950',
+        'border-rose-500/80 bg-rose-500/35 text-rose-950',
+    ];
+    const darkPalette = [
+        'border-sky-400/80 bg-sky-500/40 text-sky-100',
+        'border-emerald-400/80 bg-emerald-500/40 text-emerald-100',
+        'border-violet-400/80 bg-violet-500/40 text-violet-100',
+        'border-amber-400/80 bg-amber-500/40 text-amber-100',
+        'border-rose-400/80 bg-rose-500/40 text-rose-100',
+    ];
+    const index = taskCollections.value.findIndex((collection) => Number(collection.id) === Number(rotation?.id));
+    const palette = theme.value === 'light' ? lightPalette : darkPalette;
+
+    return palette[index >= 0 ? index % palette.length : 0];
 }
 
 function auditActorTone(actorType) {
@@ -1205,8 +1247,13 @@ function chooseAdminDate(date) {
                     <p class="text-xs font-black uppercase tracking-[.2em] text-[#ED4264]">Admin</p>
                     <h1 class="mt-1 text-xl font-black">FF Spotless</h1>
                 </div>
-                <nav class="mt-8 space-y-2">
-                    <button v-for="tab in adminTabs" :key="tab.key" class="admin-tab w-full rounded-xl border px-4 py-3 text-left text-sm font-bold" :class="adminTab === tab.key ? 'admin-tab-active border-[#ED4264]/40 bg-[#ED4264]/10 text-rose-200' : 'border-transparent text-zinc-400 hover:border-zinc-700 hover:text-zinc-100'" :aria-current="adminTab === tab.key ? 'page' : undefined" @click="selectAdminTab(tab)">{{ tab.label }}</button>
+                <nav class="mt-8 space-y-4" aria-label="Admin navigation">
+                    <template v-for="(group, groupIndex) in adminTabGroups" :key="`admin-group-${groupIndex}`">
+                        <div v-if="groupIndex" class="border-t border-zinc-800"></div>
+                        <div class="space-y-2">
+                            <button v-for="tab in group" :key="tab.key" class="admin-tab w-full rounded-xl border px-4 py-3 text-left text-sm font-bold" :class="adminTab === tab.key ? 'admin-tab-active border-[#ED4264]/40 bg-[#ED4264]/10 text-rose-200' : 'border-transparent text-zinc-400 hover:border-zinc-700 hover:text-zinc-100'" :aria-current="adminTab === tab.key ? 'page' : undefined" @click="selectAdminTab(tab)">{{ tab.label }}</button>
+                        </div>
+                    </template>
                 </nav>
                 <div class="mt-auto flex items-center gap-2">
                     <button class="h-10 flex-1 rounded-lg border border-zinc-700 px-3 text-xs font-bold text-rose-300" @click="logoutAdmin">Log out</button>
@@ -1245,8 +1292,12 @@ function chooseAdminDate(date) {
                             </button>
                         </div>
                     </div>
-                    <nav v-if="mobileNavOpen" id="admin-mobile-menu" class="mt-4 grid gap-2 rounded-xl border border-zinc-700 bg-zinc-900 p-2 shadow-xl" aria-label="Admin navigation">
-                        <button v-for="tab in adminTabs" :key="tab.key" class="admin-tab rounded-lg border px-3 py-3 text-left text-sm font-bold" :class="adminTab === tab.key ? 'admin-tab-active border-[#ED4264]/40 bg-[#ED4264]/10 text-rose-200' : 'border-zinc-700 text-zinc-300'" :aria-current="adminTab === tab.key ? 'page' : undefined" @click="selectAdminTab(tab)">{{ tab.label }}</button>
+                    <nav v-if="mobileNavOpen" id="admin-mobile-menu" class="mt-4 space-y-3 rounded-xl border border-zinc-700 bg-zinc-900 p-2 shadow-xl" aria-label="Admin navigation">
+                        <div v-for="(group, groupIndex) in adminTabGroups" :key="`mobile-admin-group-${groupIndex}`" :class="groupIndex ? 'border-t border-zinc-700 pt-3' : ''">
+                            <div class="grid gap-2">
+                                <button v-for="tab in group" :key="tab.key" class="admin-tab rounded-lg border px-3 py-3 text-left text-sm font-bold" :class="adminTab === tab.key ? 'admin-tab-active border-[#ED4264]/40 bg-[#ED4264]/10 text-rose-200' : 'border-zinc-700 text-zinc-300'" :aria-current="adminTab === tab.key ? 'page' : undefined" @click="selectAdminTab(tab)">{{ tab.label }}</button>
+                            </div>
+                        </div>
                     </nav>
                 </header>
 
@@ -1380,7 +1431,28 @@ function chooseAdminDate(date) {
 
                     <div v-else-if="adminTab === 'collections'" class="grid gap-6 lg:grid-cols-[320px_1fr]">
                         <aside class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5"><p class="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Rotations</p><p class="mt-1 text-xs leading-relaxed text-zinc-400">Each custom rotation owns one Sunday–Saturday week. Rotations repeat in the order they are added.</p><form class="mt-5 space-y-2" @submit.prevent="createCollection"><label class="form-label" for="collection-name">Rotation name</label><input id="collection-name" v-model.trim="collectionForm.name" required maxlength="100" class="field !py-2 text-sm" placeholder="For example, Heavy Duty" v-bind="validationAttrs('collection', 'name')"><p v-if="errorFor('collection', 'name')" :id="errorId('collection', 'name')" class="field-error">{{ errorFor('collection', 'name') }}</p><button class="primary-button !py-2 text-sm">Add rotation</button></form><article v-if="defaultCollection" class="mt-5 flex items-center justify-between gap-3 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2"><div class="min-w-0"><p class="truncate text-sm font-semibold text-zinc-200">{{ collectionDisplayName(defaultCollection) }}</p><p class="text-xs text-zinc-500">Fallback on working days</p></div><span class="rounded-full border border-zinc-700 px-2 py-0.5 text-xs font-black uppercase text-zinc-400">System</span></article><p v-if="!manageableCollections.length" class="mt-4 rounded-xl border border-dashed border-zinc-700 p-3 text-xs text-zinc-500">No custom rotations yet. The fallback rotation is active on weekdays.</p><div v-else class="mt-4 space-y-2"><article v-for="(collection, index) in manageableCollections" :key="`manage-${collection.id}`" class="flex items-center justify-between gap-3 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2"><div class="min-w-0"><p class="truncate text-sm font-semibold text-zinc-200">Week {{ index + 1 }}: {{ collectionDisplayName(collection) }}</p></div><button class="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-bold text-rose-300 transition hover:border-rose-400/60 hover:bg-rose-400/10" @click="deleteCollection(collection)">Delete</button></article></div></aside>
-                        <section class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-4 sm:p-5"><div class="flex flex-wrap items-start justify-between gap-3"><div><p class="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Rotation calendar</p><p class="mt-1 text-xs text-zinc-400">The calendar starts Sunday and shows the active rotation for every week.</p></div><div class="flex items-center gap-2"><button type="button" class="calendar-nav-button" aria-label="Previous month" @click="prevCollectionCalendarMonth"><svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="m12.5 4.5-5.5 5.5 5.5 5.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button><span class="min-w-32 text-center text-xs font-black text-zinc-200">{{ collectionCalendarMonthLabel(collectionCalendarMonth) }}</span><button type="button" class="calendar-nav-button" aria-label="Next month" @click="nextCollectionCalendarMonth"><svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="m7.5 4.5 5.5 5.5-5.5 5.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button><button type="button" class="small-button" @click="goToCollectionCalendarToday">Today</button></div></div><div class="mt-5 grid grid-cols-7 gap-1 text-center text-xs font-black uppercase tracking-[0.12em] text-zinc-500"><span v-for="day in ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']" :key="day">{{ day }}</span></div><div class="mt-1.5 grid grid-cols-7 gap-1"><div v-for="day in collectionCalendarDays" :key="day.date" class="min-h-[64px] rounded-md border p-1.5" :class="[collectionCalendarDayTone(day), !day.inMonth ? 'opacity-55' : '']"><div class="flex items-start justify-between gap-2"><span class="text-xs font-black" :class="day.isToday ? 'text-amber-300' : day.inMonth ? 'text-zinc-100' : 'text-zinc-500'">{{ day.dayNumber }}</span><span v-if="day.isToday" class="text-[9px] font-black uppercase text-amber-300">Today</span></div><div v-if="shouldShowCollectionCalendarPill(day)" class="mt-1"><span class="inline-flex rounded-full border px-1.5 py-0.5 text-[9px] font-black leading-tight" :class="collectionCalendarPillTone(day)">Week {{ day.rotationWeek ?? '–' }}: {{ shortCollectionName(collectionDisplayName(day.rotation)) }}</span></div></div></div></section>
+                        <section class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-4 sm:p-5">
+                            <div>
+                                <p class="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Rotation calendar</p>
+                                <p class="mt-1 text-xs text-zinc-400">The calendar starts Sunday and shows the active rotation for every week.</p>
+                                <div class="mt-4 flex flex-wrap items-center gap-2">
+                                    <button type="button" class="calendar-nav-button" aria-label="Previous month" @click="prevCollectionCalendarMonth"><svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="m12.5 4.5-5.5 5.5 5.5 5.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
+                                    <span class="min-w-32 text-center text-xs font-black text-zinc-200">{{ collectionCalendarMonthLabel(collectionCalendarMonth) }}</span>
+                                    <button type="button" class="calendar-nav-button" aria-label="Next month" @click="nextCollectionCalendarMonth"><svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="m7.5 4.5 5.5 5.5-5.5 5.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
+                                    <button type="button" class="small-button" @click="goToCollectionCalendarToday">Today</button>
+                                </div>
+                            </div>
+                            <div class="rotation-calendar-scroll mt-5">
+                                <div class="rotation-calendar" aria-label="Rotation calendar">
+                                    <div class="rotation-calendar-header text-center text-xs font-black uppercase tracking-[0.12em] text-zinc-500"><span aria-hidden="true"></span><span v-for="day in ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']" :key="day">{{ day }}</span></div>
+                                    <div v-for="week in collectionCalendarWeeks" :key="week.key" class="rotation-calendar-week">
+                                        <span class="rotation-calendar-week-label">{{ collectionCalendarWeekLabel(week) }}</span>
+                                        <div v-for="day in week.days" :key="day.date" class="rotation-calendar-cell rounded-md border p-1.5" :class="[collectionCalendarDayTone(day), !day.inMonth ? 'opacity-55' : '']" :style="{ gridColumn: sundayIndex(day.date) + 2 }"><div class="flex items-start justify-between gap-2"><span class="text-xs font-black" :class="day.isToday ? 'text-red-600' : day.inMonth ? 'text-zinc-100' : 'text-zinc-500'">{{ day.dayNumber }}</span><span v-if="day.isToday" class="text-[9px] font-black uppercase text-red-600">Today</span></div></div>
+                                        <span v-if="week.rotation" class="rotation-calendar-band" :class="collectionCalendarBandTone(week.rotation)">Rotation: {{ shortCollectionName(collectionDisplayName(week.rotation)) }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
                     </div>
 
                     <div v-else-if="adminTab === 'sessions'" class="grid gap-6 lg:grid-cols-[360px_1fr]">
@@ -1566,6 +1638,15 @@ function chooseAdminDate(date) {
 .calendar-nav-button svg { width: 1rem; height: 1rem; }
 .history-nav-button:hover,
 .calendar-nav-button:hover { border-color: rgb(161 161 170); background: #27272a; }
+.rotation-calendar-scroll { overflow-x: auto; padding-bottom: .25rem; }
+.rotation-calendar { min-width: 42rem; }
+.rotation-calendar-header,
+.rotation-calendar-week { display: grid; grid-template-columns: 1.25rem repeat(7, minmax(0, 1fr)); gap: .25rem; }
+.rotation-calendar-header { margin-bottom: .35rem; }
+.rotation-calendar-week { position: relative; margin-top: .25rem; }
+.rotation-calendar-week-label { grid-column: 1; grid-row: 1; display: flex; min-height: 4.25rem; align-items: center; justify-content: center; color: rgb(161 161 170); font-size: .5625rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; writing-mode: vertical-rl; transform: rotate(180deg); }
+.rotation-calendar-cell { grid-row: 1; min-height: 4.25rem; }
+.rotation-calendar-band { z-index: 1; grid-column: 3 / span 5; grid-row: 1; align-self: end; overflow: hidden; margin: 0 .35rem .35rem; border-width: 1px; border-style: solid; border-radius: 9999px; padding: .125rem .45rem; font-size: .625rem; font-weight: 700; line-height: 1.15; text-align: center; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 .history-selected-date { display: grid; gap: .15rem; min-width: min(100%, 16rem); }
 .history-selected-date span { color: rgb(161 161 170); font-size: .7rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .history-selected-date strong { color: rgb(244 244 245); font-size: .9375rem; }
@@ -1607,6 +1688,7 @@ function chooseAdminDate(date) {
 .theme-light .sunday-date-picker__days button.is-outside { color: #94a3b8; }
 .theme-light .history-selected-date span { color: #64748b; }
 .theme-light .history-selected-date strong { color: #0f172a; }
+.theme-light .rotation-calendar-week-label { color: #64748b; }
 .theme-light .field { caret-color: #be123c; }
 .theme-light .field::placeholder { color: #71717a; opacity: 1; }
 .theme-light .field:focus { border-color: #e11d48; box-shadow: 0 0 0 3px rgb(225 29 72 / .12); }

@@ -62,3 +62,4 @@ For these:
   - check logic correctness
   - check for security issues
   - check for performance regressions
+  - refresh Docker

@@ -714,6 +714,10 @@ class ChecklistWorkflowTest extends TestCase
         $this->assertStringContainsString('Latest five working days through today', $source);
         $this->assertStringContainsString('auditActorTone', $source);
         $this->assertStringContainsString('isWeekend: [0, 6].includes(sundayIndex(cursor))', $source);
+        $this->assertStringContainsString('collectionCalendarWeeks', $source);
+        $this->assertStringContainsString('sundayWeekOfYear', $source);
+        $this->assertStringContainsString('rotation-calendar-week-label', $source);
+        $this->assertStringContainsString('Rotation: {{ shortCollectionName(collectionDisplayName(week.rotation)) }}', $source);
         $this->assertStringContainsString('maxFileMb }} MB setiap satu', $source);
     }
 
