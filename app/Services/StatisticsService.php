@@ -26,10 +26,8 @@ class StatisticsService
         $this->weekly->advanceThrough($this->dates->today());
 
         $today = $this->dates->today();
-        $trendDates = $this->latestWorkingDaysThrough($today, 5);
-        $trendFrom = $trendDates[0];
-        $queryFrom = $from->lessThan($trendFrom) ? $from : $trendFrom;
-        $queryTo = $today;
+        $queryFrom = $from;
+        $queryTo = $to;
 
         $dailyTasks = DailyChecklist::query()
             ->whereDate('date', '>=', $queryFrom->toDateString())
@@ -98,8 +96,10 @@ class StatisticsService
         $overview['totalTasks'] = $overview['completed'] + $overview['missed'] + $overview['pending'];
 
         $trend = [];
-        foreach ($trendDates as $cursor) {
-            $trend[] = $rowForDate($cursor);
+        for ($cursor = $from; $cursor->lessThanOrEqualTo($to); $cursor = $cursor->addDay()) {
+            if ($this->dates->isWorkingDay($cursor)) {
+                $trend[] = $rowForDate($cursor);
+            }
         }
 
         return [
@@ -111,19 +111,4 @@ class StatisticsService
         ];
     }
 
-    /**
-     * @return list<CarbonImmutable>
-     */
-    private function latestWorkingDaysThrough(CarbonImmutable $today, int $count): array
-    {
-        $days = [];
-
-        for ($cursor = $today; count($days) < $count; $cursor = $cursor->subDay()) {
-            if ($this->dates->isWorkingDay($cursor)) {
-                $days[] = $cursor;
-            }
-        }
-
-        return array_reverse($days);
-    }
 }

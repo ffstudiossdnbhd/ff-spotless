@@ -43,6 +43,8 @@ class AdminDashboardController extends Controller
         $minimum = CarbonImmutable::parse($trackingStart, $dates->timezone())->startOfDay();
         $from = $from->lessThan($minimum) ? $minimum : $from;
         $from = $from->lessThan($to->subDays(364)) ? $to->subDays(364) : $from;
+        $from = $from->greaterThan($to) ? $to : $from;
+        $rotationCalendarMonth = $request->rotationCalendarMonth($dates);
 
         $templates = TaskTemplate::query()
             ->active()
@@ -79,6 +81,7 @@ class AdminDashboardController extends Controller
             $collectionSchedules,
             $checklist,
             $statistics->build($from, $to),
+            $rotationCalendarMonth,
         ));
     }
 }

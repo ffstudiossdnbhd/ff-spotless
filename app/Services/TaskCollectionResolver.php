@@ -23,6 +23,10 @@ class TaskCollectionResolver
 
     private ?CarbonImmutable $anchorWeekStart = null;
 
+    public function __construct(
+        private readonly OperationalDate $dates,
+    ) {}
+
     public function default(): TaskCollection
     {
         if ($this->defaultCollection instanceof TaskCollection) {
@@ -88,7 +92,9 @@ class TaskCollectionResolver
             throw new LogicException('The rotation cycle settings are missing.');
         }
 
-        return $this->anchorWeekStart = $setting->anchor_week_start
-            ->startOfWeek(CarbonInterface::SUNDAY);
+        return $this->anchorWeekStart = CarbonImmutable::parse(
+            $setting->anchor_week_start->toDateString(),
+            $this->dates->timezone(),
+        )->startOfWeek(CarbonInterface::SUNDAY);
     }
 }

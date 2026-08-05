@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\ChecklistDayStatus;
 use App\Models\DailyChecklist;
 use App\Models\AuditLog;
+use App\Models\RotationCycleSetting;
 use App\Models\TaskCollection;
 use App\Models\TaskCollectionSchedule;
 use App\Models\TaskSession;
@@ -78,19 +79,53 @@ class ChecklistWorkflowTest extends TestCase
         ]);
     }
 
-    public function test_rotations_repeat_in_creation_order_from_the_sunday_cycle_anchor(): void
+    public function test_rotations_and_checklists_share_the_server_resolved_sunday_cycle(): void
     {
+        RotationCycleSetting::query()->updateOrCreate(['id' => 1], ['anchor_week_start' => '2026-07-12']);
         $this->loginAdmin();
         $this->post(route('admin.collections.store'), ['name' => 'Rotation A'])->assertRedirect(route('admin.index'));
         $this->post(route('admin.collections.store'), ['name' => 'Rotation B'])->assertRedirect(route('admin.index'));
+        $this->post(route('admin.collections.store'), ['name' => 'Rotation C'])->assertRedirect(route('admin.index'));
 
         $a = TaskCollection::query()->where('name', 'Rotation A')->sole();
         $b = TaskCollection::query()->where('name', 'Rotation B')->sole();
-        $resolver = app(TaskCollectionResolver::class);
+        $c = TaskCollection::query()->where('name', 'Rotation C')->sole();
+        $this->assertSame('2026-07-12', RotationCycleSetting::query()->findOrFail(1)->anchor_week_start->toDateString());
+        $this->assertSame([$a->id, $b->id, $c->id], TaskCollection::query()
+            ->where('is_default', false)
+            ->orderBy('rotation_order')
+            ->pluck('id')
+            ->all());
+        $resolver = new TaskCollectionResolver(app(OperationalDate::class));
+        $today = app(OperationalDate::class)->today();
 
-        $this->assertSame($a->id, $resolver->forDate(CarbonImmutable::parse('2026-07-15', 'Asia/Kuala_Lumpur'))->id);
-        $this->assertSame($b->id, $resolver->forDate(CarbonImmutable::parse('2026-07-19', 'Asia/Kuala_Lumpur'))->id);
-        $this->assertSame($a->id, $resolver->forDate(CarbonImmutable::parse('2026-07-26', 'Asia/Kuala_Lumpur'))->id);
+        $this->assertSame('2026-07-15', $today->toDateString());
+        $this->assertSame($a->id, $resolver->forDate($today)->id, 'Anchor week should resolve Rotation A.');
+        $this->assertSame($b->id, $resolver->forDate(CarbonImmutable::parse('2026-07-19', 'Asia/Kuala_Lumpur'))->id, 'Second cycle week should resolve Rotation B.');
+        $this->assertSame($c->id, $resolver->forDate(CarbonImmutable::parse('2026-07-26', 'Asia/Kuala_Lumpur'))->id, 'Third cycle week should resolve Rotation C.');
+        $this->assertSame($a->id, $resolver->forDate(CarbonImmutable::parse('2026-08-02', 'Asia/Kuala_Lumpur'))->id, 'Cycle should return to Rotation A.');
+
+        $daily = $this->dailyTemplate('Rotation A daily');
+        $daily->taskCollections()->sync([$a->id]);
+        $weekly = $this->weeklyTemplate('Rotation B weekly', 1);
+        $weekly->taskCollections()->sync([$b->id]);
+
+        $this->assertTrue(app(ChecklistMaterializer::class)->forDate($today)->contains('task_template_id', $daily->id));
+        $this->assertTrue(app(WeeklyTaskScheduler::class)
+            ->forChecklistDate(CarbonImmutable::parse('2026-07-20', 'Asia/Kuala_Lumpur'))
+            ->contains('weekly_task_template_id', $weekly->id));
+
+        $calendarResponse = $this->get(route('admin.index', ['rotation_month' => '2026-07']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Dashboard')
+                ->where('rotationCalendar.month', '2026-07')
+                ->has('rotationCalendar.weeks', 5));
+        $calendar = $calendarResponse->inertiaProps('rotationCalendar');
+
+        $this->assertSame('2026-07-12', $calendar['weeks'][2]['weekStart']);
+        $this->assertSame($a->id, $calendar['weeks'][2]['rotation']['id']);
+        $this->assertSame($c->id, $calendar['weeks'][4]['rotation']['id']);
     }
 
     public function test_audit_log_records_login_attempts_and_admin_state_changes_without_credentials(): void
@@ -545,7 +580,7 @@ class ChecklistWorkflowTest extends TestCase
         ])->assertSessionHasErrors('items');
     }
 
-    public function test_statistics_return_the_simplified_overview_and_five_day_trend(): void
+    public function test_statistics_return_the_simplified_overview_and_selected_working_day_trend(): void
     {
         $today = app(OperationalDate::class)->today();
         DB::table('statistics_tracking')->update(['started_on' => $today->subDay()->toDateString()]);
@@ -564,32 +599,42 @@ class ChecklistWorkflowTest extends TestCase
         $this->assertSame(1, $stats['overview']['pending']);
         $this->assertSame(2, $stats['overview']['totalTasks']);
         $this->assertSame(['completed', 'missed', 'pending', 'completionRate', 'totalTasks'], array_keys($stats['overview']));
-        $this->assertCount(5, $stats['trend']);
+        $this->assertCount(2, $stats['trend']);
         $this->assertSame([
-            $today->subDays(6)->toDateString(),
-            $today->subDays(5)->toDateString(),
-            $today->subDays(2)->toDateString(),
             $today->subDay()->toDateString(),
             $today->toDateString(),
         ], array_column($stats['trend'], 'date'));
-        $this->assertSame($today->toDateString(), $stats['trend'][4]['date']);
+        $this->assertSame($today->toDateString(), $stats['trend'][1]['date']);
     }
 
-    public function test_statistics_trend_uses_the_previous_weekdays_when_today_is_monday(): void
+    public function test_statistics_trend_omits_weekends_inside_the_selected_range(): void
     {
         CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-07-20 09:00:00.123456', 'Asia/Kuala_Lumpur'));
         $today = app(OperationalDate::class)->today();
         DB::table('statistics_tracking')->update(['started_on' => '2026-07-14']);
 
-        $stats = app(StatisticsService::class)->build($today->subDays(29), $today);
+        $stats = app(StatisticsService::class)->build($today->subDays(6), $today);
 
         $this->assertSame([
-            '2026-07-14',
-            '2026-07-15',
-            '2026-07-16',
-            '2026-07-17',
+            '2026-07-14', '2026-07-15', '2026-07-16', '2026-07-17',
             '2026-07-20',
         ], array_column($stats['trend'], 'date'));
+    }
+
+    public function test_workload_exposes_each_sessions_median_active_task_duration(): void
+    {
+        $this->dailyTemplate('Short task', 'Pagi', 0.5);
+        $this->dailyTemplate('Medium task', 'Pagi', 1.5);
+        $this->weeklyTemplate('Long task', 1, 2.0);
+        $this->loginAdmin();
+
+        $this->get(route('admin.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Dashboard')
+                ->where('workload.0.sessionName', 'Pagi')
+                ->where('workload.0.medianTaskCredits', 1.5)
+                ->where('workload.1.medianTaskCredits', null));
     }
 
     public function test_admin_endpoints_require_master_session_and_cleaner_page_is_anonymous(): void
@@ -706,18 +751,20 @@ class ChecklistWorkflowTest extends TestCase
         $this->assertStringContainsString('Buka senarai hari ini', $source);
         $this->assertStringContainsString('Hantar bukti & tandakan selesai', $source);
         $this->assertStringContainsString('() => closeEvidence(true)', $source);
-        $this->assertStringContainsString("{ key: 'tasks', label: 'Manage Tasks' }", $source);
-        $this->assertStringContainsString("{ key: 'collections', label: 'Rotations' }", $source);
+        $this->assertStringContainsString("{ key: 'tasks', label: 'Manage Tasks', icon: 'tasks' }", $source);
+        $this->assertStringContainsString("{ key: 'collections', label: 'Rotations', icon: 'rotations' }", $source);
         $this->assertStringNotContainsString('Weekly Task Editor', $source);
         $this->assertStringNotContainsString('Daily Task Editor', $source);
         $this->assertStringContainsString('Rotation calendar', $source);
-        $this->assertStringContainsString('Latest five working days through today', $source);
+        $this->assertStringContainsString('trendRangeLabel()', $source);
+        $this->assertStringNotContainsString('Latest five working days through today', $source);
         $this->assertStringContainsString('auditActorTone', $source);
-        $this->assertStringContainsString('isWeekend: [0, 6].includes(sundayIndex(cursor))', $source);
+        $this->assertStringContainsString('rotationCalendar', $source);
         $this->assertStringContainsString('collectionCalendarWeeks', $source);
-        $this->assertStringContainsString('sundayWeekOfYear', $source);
         $this->assertStringContainsString('rotation-calendar-week-label', $source);
         $this->assertStringContainsString('Rotation: {{ shortCollectionName(collectionDisplayName(week.rotation)) }}', $source);
+        $this->assertStringContainsString('Median task duration:', $source);
+        $this->assertStringContainsString("adminIconPath('logout')", $source);
         $this->assertStringContainsString('maxFileMb }} MB setiap satu', $source);
     }
 
@@ -743,7 +790,7 @@ class ChecklistWorkflowTest extends TestCase
         return $template;
     }
 
-    private function weeklyTemplate(string $name, int $dueWeekday): WeeklyTaskTemplate
+    private function weeklyTemplate(string $name, int $dueWeekday, float $credits = 2): WeeklyTaskTemplate
     {
         $template = WeeklyTaskTemplate::query()->create([
             'task_name' => $name,
@@ -751,7 +798,7 @@ class ChecklistWorkflowTest extends TestCase
             'task_collection_id' => $this->defaultCollection()->id,
             'applies_to_all_collections' => false,
             'due_weekday' => $dueWeekday,
-            'credit_hours' => 2,
+            'credit_hours' => $credits,
             'sort_order' => (int) WeeklyTaskTemplate::query()->max('sort_order') + 1,
             'starts_on' => app(OperationalDate::class)->today()->startOfWeek()->toDateString(),
             'is_active' => true,

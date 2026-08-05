@@ -19,7 +19,7 @@ const props = defineProps({
     collectionSchedules: { type: [Array, Object], default: () => [] },
     completedTasks: { type: [Array, Object], default: () => [] },
     auditLogs: { type: [Array, Object], default: () => ({ data: [], links: [] }) },
-    rotationCycleAnchor: { type: String, default: '' },
+    rotationCalendar: { type: Object, default: () => ({ month: '', weeks: [] }) },
     statistics: { type: Object, default: null },
     workload: { type: Array, default: () => [] },
 });
@@ -65,7 +65,6 @@ const taskForm = ref({
 });
 const collectionForm = ref({ name: '' });
 const collectionScheduleForm = ref(defaultCollectionScheduleForm());
-const collectionCalendarMonth = ref(currentTodayString().slice(0, 7));
 const sessionForm = ref({ name: '' });
 const editForm = ref({});
 const taskListFilters = ref({
@@ -73,12 +72,12 @@ const taskListFilters = ref({
     task_type: 'all',
 });
 const adminTabs = [
-    { key: 'statistics', label: 'Dashboard' },
-    { key: 'history', label: 'View History' },
-    { key: 'collections', label: 'Rotations' },
-    { key: 'sessions', label: 'Work Sessions' },
-    { key: 'tasks', label: 'Manage Tasks' },
-    { key: 'audit', label: 'Audit Log' },
+    { key: 'statistics', label: 'Dashboard', icon: 'dashboard' },
+    { key: 'history', label: 'View History', icon: 'history' },
+    { key: 'collections', label: 'Rotations', icon: 'rotations' },
+    { key: 'sessions', label: 'Work Sessions', icon: 'sessions' },
+    { key: 'tasks', label: 'Manage Tasks', icon: 'tasks' },
+    { key: 'audit', label: 'Audit Log', icon: 'audit' },
 ];
 const adminTabGroups = [
     adminTabs.slice(0, 2),
@@ -105,8 +104,8 @@ const taskCollections = computed(() => collectionItems(props.collections));
 const manageableCollections = computed(() => taskCollections.value.filter((collection) => !collection.isDefault));
 const collectionSchedules = computed(() => collectionItems(props.collectionSchedules));
 const defaultCollection = computed(() => taskCollections.value.find((collection) => collection.isDefault) ?? taskCollections.value[0] ?? null);
-const collectionCalendarDays = computed(() => buildCollectionCalendarDays(collectionCalendarMonth.value));
-const collectionCalendarWeeks = computed(() => buildCollectionCalendarWeeks(collectionCalendarDays.value));
+const collectionCalendarMonth = computed(() => props.rotationCalendar?.month || today.value.slice(0, 7));
+const collectionCalendarWeeks = computed(() => props.rotationCalendar?.weeks ?? []);
 const history = computed(() => collectionItems(props.completedTasks));
 const auditLogs = computed(() => collectionItems(props.auditLogs));
 const auditLinks = computed(() => props.auditLogs?.links ?? []);
@@ -211,6 +210,18 @@ function resolveScreen() {
     return props.auth?.isAdmin ? 'admin' : 'welcome';
 }
 
+function adminIconPath(icon) {
+    return {
+        dashboard: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
+        history: 'M12 7v5l3 2m5-2a8 8 0 1 1-2.34-5.66A8 8 0 0 1 20 12Z',
+        rotations: 'M20 7v5h-5M4 17v-5h5m8.5-2.5A7 7 0 0 0 6.2 7.2L4 9.5m-1.5 5A7 7 0 0 0 13.8 16.8l2.2-2.3',
+        sessions: 'M16 20v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1m6-9a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm10 9v-1a4 4 0 0 0-3-3.87m-1-12a4 4 0 0 1 0 7.75',
+        tasks: 'M9 5h6m-6 7h6m-6 7h6M5 5h.01M5 12h.01M5 19h.01',
+        audit: 'M6 3h9l3 3v15H6V3Zm8 0v4h4M9 11h6m-6 4h6m-6 4h4',
+        logout: 'M10 17l5-5-5-5m5 5H3m18-7v14',
+    }[icon] ?? '';
+}
+
 function toggleTheme() {
     if (typeof window !== 'undefined' && typeof document !== 'undefined'
         && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -261,14 +272,6 @@ function defaultCollectionScheduleForm() {
     };
 }
 
-function isoWeekday(value) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return 1;
-    const [year, month, day] = value.split('-').map(Number);
-    const weekday = new Date(year, month - 1, day, 12).getDay();
-
-    return weekday === 0 ? 7 : weekday;
-}
-
 function monthStart(value) {
     if (!/^\d{4}-\d{2}$/.test(value || '')) return `${currentTodayString().slice(0, 7)}-01`;
     return `${value}-01`;
@@ -291,15 +294,21 @@ function collectionCalendarMonthLabel(value) {
 }
 
 function prevCollectionCalendarMonth() {
-    collectionCalendarMonth.value = shiftMonth(collectionCalendarMonth.value, -1);
+    openRotationCalendar(shiftMonth(collectionCalendarMonth.value, -1));
 }
 
 function nextCollectionCalendarMonth() {
-    collectionCalendarMonth.value = shiftMonth(collectionCalendarMonth.value, 1);
+    openRotationCalendar(shiftMonth(collectionCalendarMonth.value, 1));
 }
 
 function goToCollectionCalendarToday() {
-    collectionCalendarMonth.value = today.value.slice(0, 7);
+    openRotationCalendar(today.value.slice(0, 7));
+}
+
+function openRotationCalendar(month) {
+    if (!month || month === collectionCalendarMonth.value) return;
+
+    openAdmin(adminDate.value, { rotation_month: month });
 }
 
 function collectionDisplayName(collection) {
@@ -352,85 +361,13 @@ function sundayIndex(value) {
     return new Date(year, month - 1, day, 12).getDay();
 }
 
-function sundayWeekStart(value) {
-    return dateOffset(value, -sundayIndex(value));
-}
-
-function sundayWeekOfYear(value, year) {
-    const firstWeekStart = sundayWeekStart(`${year}-01-01`);
-
-    return Math.floor((dateOrdinal(sundayWeekStart(value)) - dateOrdinal(firstWeekStart)) / 7) + 1;
-}
-
-function dateOrdinal(value) {
-    const [year, month, day] = value.split('-').map(Number);
-
-    return Math.floor(Date.UTC(year, month - 1, day) / 86400000);
-}
-
-function rotationForDate(value) {
-    const rotations = manageableCollections.value
-        .slice()
-        .sort((left, right) => (Number(left.rotationOrder) || Number.MAX_SAFE_INTEGER) - (Number(right.rotationOrder) || Number.MAX_SAFE_INTEGER));
-
-    if (!rotations.length) return defaultCollection.value;
-
-    return rotations[rotationCycleIndex(value, rotations.length)];
-}
-
-function rotationCycleIndex(value, rotationCount = manageableCollections.value.length) {
-    if (!rotationCount) return 0;
-
-    const anchor = props.rotationCycleAnchor || sundayWeekStart(today.value);
-    const weeksSinceAnchor = Math.floor((dateOrdinal(sundayWeekStart(value)) - dateOrdinal(sundayWeekStart(anchor))) / 7);
-    return ((weeksSinceAnchor % rotationCount) + rotationCount) % rotationCount;
-}
-
-function buildCollectionCalendarDays(value) {
-    const calendarYear = Number(value.slice(0, 4));
-    const firstDay = monthStart(value);
-    const lastDay = dateOffset(shiftMonth(value, 1) + '-01', -1);
-    const gridStart = sundayWeekStart(firstDay);
-    const gridEnd = dateOffset(lastDay, 6 - sundayIndex(lastDay));
-    const days = [];
-
-    for (let cursor = gridStart; cursor <= gridEnd; cursor = dateOffset(cursor, 1)) {
-        days.push({
-            date: cursor,
-            dayNumber: Number(cursor.slice(8, 10)),
-            inMonth: cursor.startsWith(`${value}-`),
-            isToday: cursor === today.value,
-            isWeekend: [0, 6].includes(sundayIndex(cursor)),
-            weekStart: sundayWeekStart(cursor),
-            rotation: rotationForDate(cursor),
-            calendarWeek: sundayWeekOfYear(cursor, calendarYear),
-        });
-    }
-
-    return days;
-}
-
-function buildCollectionCalendarWeeks(days) {
-    return Array.from({ length: Math.ceil(days.length / 7) }, (_, index) => {
-        const weekDays = days.slice(index * 7, (index + 1) * 7);
-        const sunday = weekDays[0];
-
-        return {
-            key: sunday?.weekStart ?? `week-${index}`,
-            days: weekDays,
-            rotation: sunday?.rotation ?? null,
-            calendarWeek: sunday?.calendarWeek ?? null,
-        };
-    });
-}
-
-function collectionCalendarDayTone(day) {
+function collectionCalendarDayTone(day, rotation) {
     if (day.isWeekend) {
         return day.inMonth ? 'border-zinc-700 bg-zinc-900/70' : 'border-zinc-800 bg-zinc-950/60';
     }
 
-    return day.rotation
-        ? collectionDayTone(day.rotation.id)
+    return rotation
+        ? collectionDayTone(rotation.id)
         : (day.inMonth ? 'border-zinc-700 bg-zinc-900' : 'border-zinc-800 bg-zinc-950/60');
 }
 
@@ -752,10 +689,19 @@ function openChecklist(date = null) {
     });
 }
 
-function openAdmin(date = null, stats = null) {
-    const data = {};
-    if (date) data.date = date;
-    if (stats) Object.assign(data, stats);
+function openAdmin(date = null, options = {}) {
+    const data = {
+        date: date || adminDate.value,
+        stats_from: statsFrom.value,
+        stats_to: statsTo.value,
+        rotation_month: collectionCalendarMonth.value,
+        ...options,
+    };
+
+    Object.keys(data).forEach((key) => {
+        if (!data[key]) delete data[key];
+    });
+
     router.get('/admin', data, {
         preserveScroll: true, preserveState: true,
         onStart: () => busy.value = true,
@@ -1074,8 +1020,19 @@ function statsPreset(days) {
     openAdmin(adminDate.value, { stats_from: statsFrom.value, stats_to: statsTo.value });
 }
 
-function customStats() {
+function chooseStatsFrom(date) {
+    statsFrom.value = date;
+    refreshStats();
+}
+
+function chooseStatsTo(date) {
+    statsTo.value = date;
+    refreshStats();
+}
+
+function refreshStats() {
     if (!statsFrom.value || !statsTo.value || statsFrom.value > statsTo.value) return;
+
     openAdmin(adminDate.value, { stats_from: statsFrom.value, stats_to: statsTo.value });
 }
 
@@ -1100,16 +1057,10 @@ function trendPointY(value) {
     return trendChart.bottom - (Math.max(0, Number(value) || 0) / trendAxisMax.value) * height;
 }
 
-function trendDate(value) {
-    return formatDate(value, 'en-MY', { day: '2-digit', month: 'short' });
-}
+function trendRangeLabel() {
+    if (!props.statistics?.from || !props.statistics?.to) return '';
 
-function trendWeekday(value) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return '';
-    const [year, month, day] = value.split('-').map(Number);
-    return new Intl.DateTimeFormat('en-MY', {
-        weekday: 'short', timeZone: 'Asia/Kuala_Lumpur',
-    }).format(new Date(Date.UTC(year, month - 1, day, 12)));
+    return `${displayDateInput(props.statistics.from)} - ${displayDateInput(props.statistics.to)}`;
 }
 
 function auditActionLabel(action) {
@@ -1277,12 +1228,12 @@ function chooseAdminDate(date) {
                     <template v-for="(group, groupIndex) in adminTabGroups" :key="`admin-group-${groupIndex}`">
                         <div v-if="groupIndex" class="border-t border-zinc-800"></div>
                         <div class="space-y-2">
-                            <button v-for="tab in group" :key="tab.key" class="admin-tab w-full rounded-xl border px-4 py-3 text-left text-sm font-bold" :class="adminTab === tab.key ? 'admin-tab-active border-[#ED4264]/40 bg-[#ED4264]/10 text-rose-200' : 'border-transparent text-zinc-400 hover:border-zinc-700 hover:text-zinc-100'" :aria-current="adminTab === tab.key ? 'page' : undefined" @click="selectAdminTab(tab)">{{ tab.label }}</button>
+                            <button v-for="tab in group" :key="tab.key" class="admin-tab flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left text-sm font-bold" :class="adminTab === tab.key ? 'admin-tab-active border-[#ED4264]/40 bg-[#ED4264]/10 text-rose-200' : 'border-transparent text-zinc-400 hover:border-zinc-700 hover:text-zinc-100'" :aria-current="adminTab === tab.key ? 'page' : undefined" @click="selectAdminTab(tab)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-4 w-4 shrink-0"><path :d="adminIconPath(tab.icon)" stroke-linecap="round" stroke-linejoin="round"></path></svg><span>{{ tab.label }}</span></button>
                         </div>
                     </template>
                 </nav>
                 <div class="mt-auto flex items-center gap-2">
-                    <button class="h-10 flex-1 rounded-lg border border-zinc-700 px-3 text-xs font-bold text-rose-300" @click="logoutAdmin">Log out</button>
+                    <button class="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-lg border border-zinc-700 px-3 text-xs font-bold text-rose-300" @click="logoutAdmin"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-4 w-4"><path :d="adminIconPath('logout')" stroke-linecap="round" stroke-linejoin="round"></path></svg><span>Log out</span></button>
                     <button type="button" class="theme-toggle shrink-0 rounded-lg border border-zinc-700" :aria-label="themeToggleLabel" :title="themeToggleLabel" @click="toggleTheme">
                         <svg v-if="theme === 'light'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                             <circle cx="12" cy="12" r="4"></circle>
@@ -1305,7 +1256,7 @@ function chooseAdminDate(date) {
                         </div>
                         <div class="flex gap-2">
                             <button type="button" class="h-10 rounded-lg border border-zinc-700 px-3 text-xs font-bold" :aria-expanded="mobileNavOpen" aria-controls="admin-mobile-menu" @click="mobileNavOpen = !mobileNavOpen">Menu</button>
-                            <button class="h-10 rounded-lg border border-zinc-700 px-3 text-xs font-bold" @click="logoutAdmin">Log out</button>
+                            <button class="inline-flex h-10 items-center gap-2 rounded-lg border border-zinc-700 px-3 text-xs font-bold" @click="logoutAdmin"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-4 w-4"><path :d="adminIconPath('logout')" stroke-linecap="round" stroke-linejoin="round"></path></svg><span>Log out</span></button>
                             <button type="button" class="theme-toggle shrink-0 rounded-lg border border-zinc-700" :aria-label="themeToggleLabel" :title="themeToggleLabel" @click="toggleTheme">
                                 <svg v-if="theme === 'light'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                                     <circle cx="12" cy="12" r="4"></circle>
@@ -1321,7 +1272,7 @@ function chooseAdminDate(date) {
                     <nav v-if="mobileNavOpen" id="admin-mobile-menu" class="mt-4 space-y-3 rounded-xl border border-zinc-700 bg-zinc-900 p-2 shadow-xl" aria-label="Admin navigation">
                         <div v-for="(group, groupIndex) in adminTabGroups" :key="`mobile-admin-group-${groupIndex}`" :class="groupIndex ? 'border-t border-zinc-700 pt-3' : ''">
                             <div class="grid gap-2">
-                                <button v-for="tab in group" :key="tab.key" class="admin-tab rounded-lg border px-3 py-3 text-left text-sm font-bold" :class="adminTab === tab.key ? 'admin-tab-active border-[#ED4264]/40 bg-[#ED4264]/10 text-rose-200' : 'border-zinc-700 text-zinc-300'" :aria-current="adminTab === tab.key ? 'page' : undefined" @click="selectAdminTab(tab)">{{ tab.label }}</button>
+                                <button v-for="tab in group" :key="tab.key" class="admin-tab flex items-center gap-3 rounded-lg border px-3 py-3 text-left text-sm font-bold" :class="adminTab === tab.key ? 'admin-tab-active border-[#ED4264]/40 bg-[#ED4264]/10 text-rose-200' : 'border-zinc-700 text-zinc-300'" :aria-current="adminTab === tab.key ? 'page' : undefined" @click="selectAdminTab(tab)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-4 w-4 shrink-0"><path :d="adminIconPath(tab.icon)" stroke-linecap="round" stroke-linejoin="round"></path></svg><span>{{ tab.label }}</span></button>
                             </div>
                         </div>
                     </nav>
@@ -1399,26 +1350,26 @@ function chooseAdminDate(date) {
                                     <button v-for="days in [7,30,90]" :key="days" type="button" class="small-button" :class="statsFrom === dateOffset(today, -(days - 1)) && statsTo === today ? 'border-rose-400 bg-rose-400/10 text-rose-200' : ''" @click="statsPreset(days)">{{ days }} days</button>
                                 </div>
                             </div>
-                            <form class="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]" @submit.prevent="customStats">
-                                <SundayFirstDatePicker v-model="statsFrom" label="From" :max="statsTo || today" :theme="theme" />
-                                <SundayFirstDatePicker v-model="statsTo" label="To" :min="statsFrom" :max="today" :theme="theme" />
-                                <button class="small-button self-end" :disabled="!statsFrom || !statsTo || statsFrom > statsTo">Filter</button>
-                            </form>
+                            <div class="mt-4 grid gap-3 sm:grid-cols-2">
+                                <SundayFirstDatePicker :model-value="statsFrom" label="From" :max="statsTo || today" :theme="theme" @update:model-value="chooseStatsFrom" />
+                                <SundayFirstDatePicker :model-value="statsTo" label="To" :min="statsFrom" :max="today" :theme="theme" @update:model-value="chooseStatsTo" />
+                            </div>
                         </section>
                         <p class="text-xs text-zinc-500">Accurate statistics are tracked from {{ displayAdminDate(statistics.trackingStart) }}.</p>
                         <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                             <div v-for="card in [['Completed', statistics.overview.completed], ['Missed', statistics.overview.missed], ['Total tasks', statistics.overview.totalTasks], ['Completion rate', statistics.overview.completionRate + '%']]" :key="card[0]" class="rounded-2xl border border-zinc-700 bg-zinc-900 p-4"><p class="text-xs font-bold uppercase text-zinc-500">{{ card[0] }}</p><p class="mt-2 text-2xl font-black">{{ card[1] }}</p></div>
                         </div>
                         <div class="rounded-2xl border border-zinc-700 bg-zinc-900 p-5">
-                            <div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="font-black">Daily Trend</h2><p class="text-xs text-zinc-500">Latest five working days through today</p></div>
+                            <div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="font-black">Daily Trend</h2><p class="text-xs text-zinc-500">{{ trendRangeLabel() }}</p></div>
                             <div class="mt-4 flex items-center gap-4 text-xs font-bold"><span class="inline-flex items-center gap-2 text-sky-300"><i class="h-2.5 w-2.5 rounded-full bg-sky-400"></i>Completed</span><span class="inline-flex items-center gap-2 text-rose-300"><i class="h-2.5 w-2.5 bg-rose-400"></i>Missed</span></div>
                             <div class="mt-4 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-950/5 px-2 py-3">
-                                <svg class="block h-auto min-w-[35rem] w-full" viewBox="0 0 560 132" role="img" aria-labelledby="daily-trend-title daily-trend-description">
-                                    <title id="daily-trend-title">Daily trend</title><desc id="daily-trend-description">Completed and missed tasks for the latest five working days.</desc>
+                                <svg class="block h-auto min-w-[35rem] w-full" viewBox="0 0 560 116" role="img" aria-labelledby="daily-trend-title daily-trend-description">
+                                    <title id="daily-trend-title">Daily trend</title><desc id="daily-trend-description">Completed and missed tasks for working days from {{ trendRangeLabel() }}.</desc>
                                     <g v-for="tick in trendTicks" :key="tick.value"><line :x1="trendChart.left" :x2="trendChart.right" :y1="tick.y" :y2="tick.y" stroke="currentColor" stroke-width="0.5" stroke-opacity="0.7" class="text-zinc-700"></line><text x="42" :y="tick.y + 2.5" text-anchor="end" fill="currentColor" class="text-zinc-500" font-size="8">{{ tick.value }}</text></g>
                                     <line :x1="trendChart.left" :x2="trendChart.right" :y1="trendChart.bottom" :y2="trendChart.bottom" stroke="currentColor" stroke-width="1" class="text-zinc-600"></line>
                                     <polyline :points="trendLinePoints('completed')" fill="none" stroke="#60a5fa" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></polyline><polyline :points="trendLinePoints('missed')" fill="none" stroke="#fb7185" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></polyline>
-                                    <g v-for="(row, index) in statistics.trend" :key="row.date"><circle :cx="trendPointX(index, statistics.trend.length)" :cy="trendPointY(row.completed)" r="1.9" fill="#60a5fa"><title>{{ `${displayAdminDate(row.date)}: ${row.completed} completed` }}</title></circle><rect :x="trendPointX(index, statistics.trend.length) - 1.8" :y="trendPointY(row.missed) - 1.8" width="3.6" height="3.6" fill="#fb7185"><title>{{ `${displayAdminDate(row.date)}: ${row.missed} missed` }}</title></rect><text :x="trendPointX(index, statistics.trend.length)" y="106" text-anchor="middle" fill="currentColor" class="text-zinc-400" font-size="7.5">{{ trendDate(row.date) }}</text><text :x="trendPointX(index, statistics.trend.length)" y="119" text-anchor="middle" fill="currentColor" class="text-zinc-600" font-size="6.2">{{ trendWeekday(row.date) }}</text></g>
+                                    <g v-for="(row, index) in statistics.trend" :key="row.date"><circle :cx="trendPointX(index, statistics.trend.length)" :cy="trendPointY(row.completed)" r="1.9" fill="#60a5fa"><title>{{ `${displayAdminDate(row.date)}: ${row.completed} completed` }}</title></circle><rect :x="trendPointX(index, statistics.trend.length) - 1.8" :y="trendPointY(row.missed) - 1.8" width="3.6" height="3.6" fill="#fb7185"><title>{{ `${displayAdminDate(row.date)}: ${row.missed} missed` }}</title></rect></g>
+                                    <text :x="trendChart.left" y="104" text-anchor="start" fill="currentColor" class="text-zinc-400" font-size="8">{{ displayDateInput(statistics.from) }}</text><text :x="trendChart.right" y="104" text-anchor="end" fill="currentColor" class="text-zinc-400" font-size="8">{{ displayDateInput(statistics.to) }}</text>
                                 </svg>
                             </div>
                         </div>
@@ -1428,7 +1379,7 @@ function chooseAdminDate(date) {
                         <div class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-4 sm:p-5">
                             <div class="flex flex-wrap items-end justify-between gap-4">
                                 <div class="flex items-end gap-2"><button class="history-nav-button" aria-label="Previous day" @click="openAdmin(dateOffset(adminDate, -1))"><svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="m12.5 4.5-5.5 5.5 5.5 5.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button><SundayFirstDatePicker :model-value="adminDate" label="History date" :theme="theme" @update:model-value="chooseAdminDate" /><button class="history-nav-button" aria-label="Next day" @click="openAdmin(dateOffset(adminDate, 1))"><svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="m7.5 4.5 5.5 5.5-5.5 5.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></div>
-                                <div class="flex flex-wrap items-center gap-3"><button v-if="!adminIsToday" class="small-button" @click="openAdmin()">Back to today</button><div class="history-selected-date"><span>Viewing</span><strong>{{ displayAdminDate(adminDate) }}</strong></div></div>
+                                <div class="flex flex-wrap items-center gap-3"><button v-if="!adminIsToday" class="small-button" @click="openAdmin(today)">Back to today</button><div class="history-selected-date"><span>Viewing</span><strong>{{ displayAdminDate(adminDate) }}</strong></div></div>
                             </div>
                         </div>
                         <section v-for="(session, index) in sessions" :key="session.id" v-show="historyFor(session.id).length">
@@ -1471,9 +1422,9 @@ function chooseAdminDate(date) {
                             <div class="rotation-calendar-scroll mt-5">
                                 <div class="rotation-calendar" aria-label="Rotation calendar">
                                     <div class="rotation-calendar-header text-center text-xs font-black uppercase tracking-[0.12em] text-zinc-500"><span aria-hidden="true"></span><span v-for="day in ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']" :key="day">{{ day }}</span></div>
-                                    <div v-for="week in collectionCalendarWeeks" :key="week.key" class="rotation-calendar-week">
+                                    <div v-for="week in collectionCalendarWeeks" :key="week.weekStart" class="rotation-calendar-week">
                                         <span class="rotation-calendar-week-label">{{ collectionCalendarWeekLabel(week) }}</span>
-                                        <div v-for="day in week.days" :key="day.date" class="rotation-calendar-cell rounded-md border p-1.5" :class="[collectionCalendarDayTone(day), !day.inMonth ? 'opacity-55' : '']" :style="{ gridColumn: sundayIndex(day.date) + 2 }"><div class="flex items-start justify-between gap-2"><span class="text-xs font-black" :class="day.isToday ? 'text-red-600' : day.inMonth ? 'text-zinc-100' : 'text-zinc-500'">{{ day.dayNumber }}</span><span v-if="day.isToday" class="text-[9px] font-black uppercase text-red-600">Today</span></div></div>
+                                        <div v-for="day in week.days" :key="day.date" class="rotation-calendar-cell rounded-md border p-1.5" :class="[collectionCalendarDayTone(day, week.rotation), !day.inMonth ? 'opacity-55' : '']" :style="{ gridColumn: sundayIndex(day.date) + 2 }"><div class="flex items-start justify-between gap-2"><span class="text-xs font-black" :class="day.isToday ? 'text-red-600' : day.inMonth ? 'text-zinc-100' : 'text-zinc-500'">{{ day.dayNumber }}</span><span v-if="day.isToday" class="text-[9px] font-black uppercase text-red-600">Today</span></div></div>
                                         <span v-if="week.rotation" class="rotation-calendar-band" :class="collectionCalendarBandTone(week.rotation)">Rotation: {{ shortCollectionName(collectionDisplayName(week.rotation)) }}</span>
                                     </div>
                                 </div>
@@ -1490,7 +1441,7 @@ function chooseAdminDate(date) {
                                 <p v-if="errorFor('session', 'name')" :id="errorId('session', 'name')" class="field-error">{{ errorFor('session', 'name') }}</p>
                                 <button class="primary-button">Add work session</button>
                             </form>
-                            <div class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5"><h2 class="font-black">Expected Weekly Load</h2><div class="mt-3 space-y-2"><div v-for="row in workload" :key="row.sessionId" class="rounded-xl border p-3" :class="row.isOverloaded ? 'border-amber-500/40 bg-amber-500/10' : 'border-zinc-700'"><div class="flex justify-between text-sm font-bold"><span>{{ row.sessionName }}</span><span>{{ row.expectedWeeklyCredits }} hrs</span></div><p class="mt-1 text-xs text-zinc-500">5 x {{ row.dailyCredits }} daily + {{ row.weeklyCredits }} weekly<span v-if="row.isOverloaded" class="text-amber-300"> - more than 20% above average</span></p></div></div></div>
+                            <div class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5"><h2 class="font-black">Expected Weekly Load</h2><div class="mt-3 space-y-2"><div v-for="row in workload" :key="row.sessionId" class="rounded-xl border p-3" :class="row.isOverloaded ? 'border-amber-500/40 bg-amber-500/10' : 'border-zinc-700'"><div class="flex justify-between text-sm font-bold"><span>{{ row.sessionName }}</span><span>{{ row.expectedWeeklyCredits }} hrs</span></div><p class="mt-1 text-xs text-zinc-500">5 x {{ row.dailyCredits }} daily + {{ row.weeklyCredits }} weekly<span v-if="row.isOverloaded" class="text-amber-300"> - more than 20% above average</span></p><p class="mt-1 text-xs text-zinc-500">{{ row.medianTaskCredits === null ? 'No active tasks' : `Median task duration: ${row.medianTaskCredits} hrs` }}</p></div></div></div>
                         </div>
                         <div class="space-y-2" data-sortable-work-sessions>
                             <article v-for="(session, index) in activeSessions" :key="session.id" :data-session-id="session.id" class="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-4"><button type="button" class="session-drag-handle inline-flex h-8 w-5 cursor-grab items-center justify-center text-zinc-500" aria-label="Drag to reorder work sessions"><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5"><circle cx="8" cy="5" r="1.7"></circle><circle cx="16" cy="5" r="1.7"></circle><circle cx="8" cy="12" r="1.7"></circle><circle cx="16" cy="12" r="1.7"></circle><circle cx="8" cy="19" r="1.7"></circle><circle cx="16" cy="19" r="1.7"></circle></svg></button><span class="w-7 text-center font-black text-zinc-500">{{ index + 1 }}</span><strong class="min-w-0 flex-1">{{ session.name }}</strong><button class="small-button inline-flex h-9 w-9 items-center justify-center p-0" aria-label="Edit work session" title="Edit work session" @click="editSession(session)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m4 16.5-.7 4.2 4.2-.7L18.8 8.7l-3.5-3.5L4 16.5Z" stroke-linejoin="round"></path><path d="m13.8 6.7 3.5 3.5" stroke-linecap="round"></path></svg></button><button class="small-button text-rose-300" @click="archiveSession(session)">Archive</button></article>
@@ -1611,7 +1562,7 @@ function chooseAdminDate(date) {
                         <p v-if="errorFor('sessionEdit', 'name')" :id="errorId('sessionEdit', 'name')" class="field-error">{{ errorFor('sessionEdit', 'name') }}</p>
                     </template>
                     <template v-else>
-                        <label class="form-label">Task type<select v-model="editForm.task_type" class="field" disabled><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+                        <div class="form-label"><span>Task type</span><div class="readonly-field" role="note" :aria-label="`Task type: ${editForm.task_type === 'weekly' ? 'Weekly' : 'Daily'}. This cannot be changed after creation.`"><span class="readonly-field__value"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3" stroke-linecap="round"></path></svg>{{ editForm.task_type === 'weekly' ? 'Weekly' : 'Daily' }}</span><span class="readonly-field__badge">Locked</span></div><span class="readonly-field__help">Task type is locked after creation.</span></div>
                         <label class="form-label">Task name<input v-model.trim="editForm.task_name" required maxlength="255" class="field" placeholder="For example, Mop the lobby" v-bind="validationAttrs('taskEdit', 'task_name')"></label>
                         <p v-if="errorFor('taskEdit', 'task_name')" :id="errorId('taskEdit', 'task_name')" class="field-error">{{ errorFor('taskEdit', 'task_name') }}</p>
                         <label class="form-label">Work session<select v-model="editForm.task_session_id" required class="field" v-bind="validationAttrs('taskEdit', 'task_session_id')"><option v-for="session in activeSessions" :key="session.id" :value="session.id">{{ session.name }}</option></select></label>
@@ -1649,6 +1600,11 @@ function chooseAdminDate(date) {
 .field:focus { border-color: #ED4264; }
 .field[aria-invalid='true'] { border-color: #fb7185; }
 .form-label { display: grid; gap: .35rem; color: rgb(212 212 216); font-size: .8125rem; font-weight: 650; }
+.readonly-field { display: flex; min-height: 2.75rem; align-items: center; justify-content: space-between; gap: .75rem; border: 1px solid rgb(82 82 91); border-radius: .75rem; background: rgb(39 39 42 / .65); padding: 0 .75rem; color: rgb(212 212 216); }
+.readonly-field__value { display: inline-flex; min-width: 0; align-items: center; gap: .5rem; font-size: .875rem; font-weight: 650; }
+.readonly-field__value svg { width: 1rem; height: 1rem; color: rgb(161 161 170); }
+.readonly-field__badge { border: 1px solid rgb(82 82 91); border-radius: 9999px; padding: .125rem .45rem; color: rgb(161 161 170); font-size: .625rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.readonly-field__help { color: rgb(161 161 170); font-size: .6875rem; font-weight: 500; line-height: 1.25; }
 .field-error { color: #fda4af; font-size: .8125rem; font-weight: 600; line-height: 1.35; }
 .primary-button { width: 100%; height: 2.75rem; border-radius: .75rem; background: linear-gradient(to right, #ED4264, #FFEDBC); color: #18181b; font-size: .875rem; font-weight: 560; }
 .primary-button:disabled { opacity: .5; }
@@ -1705,6 +1661,11 @@ function chooseAdminDate(date) {
 .theme-light .field,
 .theme-light .small-button,
 .theme-light .theme-toggle { background-color: #fff; border-color: #cbd5e1; color: #18181b; color-scheme: light; }
+.theme-light .readonly-field { background-color: #f8fafc; border-color: #cbd5e1; color: #334155; }
+.theme-light .readonly-field__value svg,
+.theme-light .readonly-field__badge,
+.theme-light .readonly-field__help { color: #64748b; }
+.theme-light .readonly-field__badge { border-color: #cbd5e1; background-color: #fff; }
 .theme-light .form-label,
 .theme-light .sunday-date-picker__label { color: #334155; }
 .theme-light .sunday-date-picker__trigger,

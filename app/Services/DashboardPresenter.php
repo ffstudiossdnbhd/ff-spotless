@@ -6,7 +6,6 @@ use App\Models\ChecklistDayStatus;
 use App\Models\ChecklistItemPosition;
 use App\Models\DailyChecklist;
 use App\Models\AuditLog;
-use App\Models\RotationCycleSetting;
 use App\Models\TaskCollection;
 use App\Models\TaskCollectionSchedule;
 use App\Models\TaskSession;
@@ -20,12 +19,14 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Collection as SupportCollection;
 
 class DashboardPresenter
 {
     public function __construct(
         private readonly MasterAdminSession $adminSession,
         private readonly OperationalDate $dates,
+        private readonly TaskCollectionResolver $collections,
     ) {}
 
     public function welcome(Request $request): array
@@ -55,6 +56,7 @@ class DashboardPresenter
         Collection $collectionSchedules,
         array $checklist,
         array $statistics,
+        CarbonImmutable $rotationCalendarMonth,
     ): array {
         $props = $this->base($request, 'admin', $date, []);
         $props['templates'] = $templates->map(static fn (TaskTemplate $template): array => [
@@ -95,9 +97,7 @@ class DashboardPresenter
             'endsOn' => $schedule->ends_on->toDateString(),
         ])->values()->all();
         $props['completedTasks'] = $this->historyItems($date, $checklist);
-        $props['rotationCycleAnchor'] = RotationCycleSetting::query()
-            ->find(1)?->anchor_week_start?->toDateString()
-            ?? $this->dates->today()->startOfWeek(CarbonInterface::SUNDAY)->toDateString();
+        $props['rotationCalendar'] = $this->rotationCalendar($rotationCalendarMonth);
         $props['auditLogs'] = $this->auditLogs();
         $props['statistics'] = $statistics;
         $props['workload'] = $this->workload($templates, $weeklyTemplates);
@@ -279,7 +279,7 @@ class DashboardPresenter
             'collections' => [],
             'collectionSchedules' => [],
             'completedTasks' => [],
-            'rotationCycleAnchor' => null,
+            'rotationCalendar' => ['month' => null, 'weeks' => []],
             'auditLogs' => ['data' => [], 'links' => []],
             'statistics' => null,
             'workload' => [],
@@ -290,8 +290,13 @@ class DashboardPresenter
     {
         $sessions = TaskSession::query()->active()->orderBy('sort_order')->get();
         $rows = $sessions->map(function (TaskSession $session) use ($templates, $weeklyTemplates): array {
-            $daily = $templates->where('task_session_id', $session->id)->sum(fn ($task) => (float) $task->credit_hours);
-            $weekly = $weeklyTemplates->where('task_session_id', $session->id)->sum(fn ($task) => (float) $task->credit_hours);
+            $dailyTemplates = $templates->where('task_session_id', $session->id);
+            $weeklySessionTemplates = $weeklyTemplates->where('task_session_id', $session->id);
+            $daily = $dailyTemplates->sum(fn ($task) => (float) $task->credit_hours);
+            $weekly = $weeklySessionTemplates->sum(fn ($task) => (float) $task->credit_hours);
+            $taskCredits = $dailyTemplates
+                ->pluck('credit_hours')
+                ->concat($weeklySessionTemplates->pluck('credit_hours'));
 
             return [
                 'sessionId' => $session->id,
@@ -299,6 +304,7 @@ class DashboardPresenter
                 'dailyCredits' => round($daily, 2),
                 'weeklyCredits' => round($weekly, 2),
                 'expectedWeeklyCredits' => round(($daily * 5) + $weekly, 2),
+                'medianTaskCredits' => $this->medianCredits($taskCredits),
             ];
         });
         $average = $rows->avg('expectedWeeklyCredits') ?: 0;
@@ -307,6 +313,77 @@ class DashboardPresenter
             ...$row,
             'isOverloaded' => $average > 0 && $row['expectedWeeklyCredits'] > $average * 1.2,
         ])->values()->all();
+    }
+
+    /**
+     * @param  SupportCollection<int, int|float|string>  $credits
+     */
+    private function medianCredits(SupportCollection $credits): ?float
+    {
+        $values = $credits
+            ->map(static fn ($credit): float => (float) $credit)
+            ->sort()
+            ->values();
+        $count = $values->count();
+
+        if ($count === 0) {
+            return null;
+        }
+
+        $middle = intdiv($count, 2);
+        $median = $count % 2 === 0
+            ? ($values[$middle - 1] + $values[$middle]) / 2
+            : $values[$middle];
+
+        return round($median, 2);
+    }
+
+    /**
+     * @return array{month: string, weeks: list<array<string, mixed>>}
+     */
+    private function rotationCalendar(CarbonImmutable $month): array
+    {
+        $calendarMonth = $month->startOfMonth();
+        $gridStart = $calendarMonth->startOfWeek(CarbonInterface::SUNDAY);
+        $gridEnd = $calendarMonth->endOfMonth()->endOfWeek(CarbonInterface::SATURDAY);
+        $weeks = [];
+
+        for ($weekStart = $gridStart; $weekStart->lessThanOrEqualTo($gridEnd); $weekStart = $weekStart->addWeek()) {
+            $rotation = $this->collections->forDate($weekStart);
+            $weeks[] = [
+                'weekStart' => $weekStart->toDateString(),
+                'calendarWeek' => $this->sundayWeekOfYear($weekStart, $calendarMonth->year),
+                'rotation' => [
+                    'id' => $rotation->id,
+                    'name' => $rotation->name,
+                    'isDefault' => $rotation->is_default,
+                ],
+                'days' => collect(range(0, 6))->map(function (int $offset) use ($weekStart, $calendarMonth): array {
+                    $day = $weekStart->addDays($offset);
+
+                    return [
+                        'date' => $day->toDateString(),
+                        'dayNumber' => $day->day,
+                        'inMonth' => $day->isSameMonth($calendarMonth),
+                        'isToday' => $day->isSameDay($this->dates->today()),
+                        'isWeekend' => in_array($day->dayOfWeek, [CarbonInterface::SUNDAY, CarbonInterface::SATURDAY], true),
+                    ];
+                })->all(),
+            ];
+        }
+
+        return [
+            'month' => $calendarMonth->format('Y-m'),
+            'weeks' => $weeks,
+        ];
+    }
+
+    private function sundayWeekOfYear(CarbonImmutable $weekStart, int $year): int
+    {
+        $firstWeekStart = CarbonImmutable::create($year, 1, 1, 0, 0, 0, $this->dates->timezone())
+            ->startOfWeek(CarbonInterface::SUNDAY);
+
+        return (int) floor($firstWeekStart->diffInDays($weekStart, false) / 7) + 1;
     }
 
     private function localTimestamp($timestamp): ?string
