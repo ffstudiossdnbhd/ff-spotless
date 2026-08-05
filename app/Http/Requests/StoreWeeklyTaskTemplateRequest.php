@@ -32,7 +32,7 @@ class StoreWeeklyTaskTemplateRequest extends FormRequest
             'applies_to_all_collections' => ['bail', 'required', 'boolean'],
             'task_collection_ids' => ['bail', 'array'],
             'task_collection_ids.*' => ['bail', 'integer', 'distinct', 'exists:task_collections,id'],
-            'due_weekday' => ['bail', 'required', 'integer', 'between:1,7'],
+            'due_weekday' => ['bail', 'required', 'integer', 'between:1,5'],
             'credit_hours' => ['bail', 'required', 'numeric', 'min:0.25', 'max:24', 'decimal:0,2', 'multiple_of:0.25'],
         ];
     }
@@ -61,7 +61,7 @@ class StoreWeeklyTaskTemplateRequest extends FormRequest
             'task_collection_ids.*.integer' => 'A task collection is invalid.',
             'task_collection_ids.*.exists' => 'A task collection was not found.',
             'due_weekday.required' => 'Weekly due day is required.',
-            'due_weekday.between' => 'Weekly due day is invalid.',
+            'due_weekday.between' => 'Weekly tasks can only be due from Monday to Friday.',
             'credit_hours.required' => 'Credit hours are required.',
             'credit_hours.min' => 'Credit hours must be at least 0.25.',
             'credit_hours.max' => 'Credit hours must not exceed 24.',

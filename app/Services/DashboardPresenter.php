@@ -5,17 +5,20 @@ namespace App\Services;
 use App\Models\ChecklistDayStatus;
 use App\Models\ChecklistItemPosition;
 use App\Models\DailyChecklist;
+use App\Models\AuditLog;
+use App\Models\RotationCycleSetting;
 use App\Models\TaskCollection;
 use App\Models\TaskCollectionSchedule;
 use App\Models\TaskSession;
-use App\Models\TaskReopenAudit;
 use App\Models\TaskTemplate;
 use App\Models\User;
 use App\Models\WeeklyTaskOccurrence;
 use App\Models\WeeklyTaskTemplate;
 use Carbon\CarbonImmutable;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Schema;
 
 class DashboardPresenter
@@ -82,6 +85,7 @@ class DashboardPresenter
             'id' => $collection->id,
             'name' => $collection->name,
             'isDefault' => $collection->is_default,
+            'rotationOrder' => $collection->rotation_order,
         ])->values()->all();
         $props['collectionSchedules'] = $collectionSchedules->map(static fn (TaskCollectionSchedule $schedule): array => [
             'id' => $schedule->id,
@@ -91,7 +95,10 @@ class DashboardPresenter
             'endsOn' => $schedule->ends_on->toDateString(),
         ])->values()->all();
         $props['completedTasks'] = $this->historyItems($date, $checklist);
-        $props['reopenAudits'] = $this->reopenAudits();
+        $props['rotationCycleAnchor'] = RotationCycleSetting::query()
+            ->find(1)?->anchor_week_start?->toDateString()
+            ?? $this->dates->today()->startOfWeek(CarbonInterface::SUNDAY)->toDateString();
+        $props['auditLogs'] = $this->auditLogs();
         $props['statistics'] = $statistics;
         $props['workload'] = $this->workload($templates, $weeklyTemplates);
 
@@ -220,25 +227,22 @@ class DashboardPresenter
     /**
      * @return list<array<string, mixed>>
      */
-    private function reopenAudits(): array
+    private function auditLogs(): LengthAwarePaginator
     {
-        return TaskReopenAudit::query()
+        return AuditLog::query()
             ->orderByDesc('occurred_at')
-            ->limit(50)
-            ->get()
-            ->map(fn (TaskReopenAudit $audit): array => [
+            ->paginate(50, ['*'], 'audit_page')
+            ->withQueryString()
+            ->through(fn (AuditLog $audit): array => [
                 'id' => $audit->id,
-                'taskType' => $audit->task_type,
-                'taskText' => $audit->task_name,
-                'sessionName' => $audit->session_name,
-                'taskDate' => $audit->task_date->toDateString(),
-                'previousCompletedAt' => $this->localTimestamp($audit->previous_completed_at),
-                'completionNote' => $audit->completion_note,
-                'evidenceCount' => $audit->invalidated_evidence_count,
-                'reason' => $audit->reason,
-                'performedBy' => $audit->performed_by,
+                'action' => $audit->action,
+                'actorType' => $audit->actor_type,
+                'actorLabel' => $audit->actor_label,
+                'subjectType' => $audit->subject_type,
+                'subjectId' => $audit->subject_id,
+                'metadata' => $audit->metadata ?? [],
                 'occurredAt' => $this->localTimestamp($audit->occurred_at),
-            ])->values()->all();
+            ]);
     }
 
     private function base(Request $request, string $mode, CarbonImmutable $date, array $tasks): array
@@ -269,18 +273,14 @@ class DashboardPresenter
                     ->whereDate('date', $dateString)
                     ->where('is_unavailable', true)
                     ->exists(),
-            'uploadLimits' => [
-                'maxFiles' => max(1, (int) ini_get('max_file_uploads')),
-                'maxFileMb' => 10,
-                'uploadMax' => (string) ini_get('upload_max_filesize'),
-                'postMax' => (string) ini_get('post_max_size'),
-            ],
+            'uploadLimits' => $this->uploadLimits(),
             'templates' => [],
             'weeklyTemplates' => [],
             'collections' => [],
             'collectionSchedules' => [],
             'completedTasks' => [],
-            'reopenAudits' => [],
+            'rotationCycleAnchor' => null,
+            'auditLogs' => ['data' => [], 'links' => []],
             'statistics' => null,
             'workload' => [],
         ];
@@ -298,7 +298,7 @@ class DashboardPresenter
                 'sessionName' => $session->name,
                 'dailyCredits' => round($daily, 2),
                 'weeklyCredits' => round($weekly, 2),
-                'expectedWeeklyCredits' => round(($daily * 7) + $weekly, 2),
+                'expectedWeeklyCredits' => round(($daily * 5) + $weekly, 2),
             ];
         });
         $average = $rows->avg('expectedWeeklyCredits') ?: 0;
@@ -312,5 +312,55 @@ class DashboardPresenter
     private function localTimestamp($timestamp): ?string
     {
         return $timestamp?->setTimezone($this->dates->timezone())->format('Y-m-d\\TH:i:s.uP');
+    }
+
+    /**
+     * @return array{maxFiles: int, maxFileMb: int|float, maxFileBytes: int, maxRequestMb: int|float, maxRequestBytes: int}
+     */
+    private function uploadLimits(): array
+    {
+        $configuredFiles = max(1, (int) config('checklist.evidence.max_files', 5));
+        $configuredFileBytes = max(1, (int) config('checklist.evidence.max_file_kb', 10240)) * 1024;
+        $configuredRequestBytes = max(1, (int) config('checklist.evidence.max_request_kb', 56320)) * 1024;
+        $phpFiles = (int) ini_get('max_file_uploads');
+        $phpFileBytes = $this->phpSizeToBytes((string) ini_get('upload_max_filesize'));
+        $phpRequestBytes = $this->phpSizeToBytes((string) ini_get('post_max_size'));
+        $maxFiles = $phpFiles > 0 ? min($configuredFiles, $phpFiles) : $configuredFiles;
+        $maxFileBytes = $phpFileBytes > 0 ? min($configuredFileBytes, $phpFileBytes) : $configuredFileBytes;
+        $maxRequestBytes = $phpRequestBytes > 0 ? min($configuredRequestBytes, $phpRequestBytes) : $configuredRequestBytes;
+
+        return [
+            'maxFiles' => $maxFiles,
+            'maxFileMb' => $this->megabytes($maxFileBytes),
+            'maxFileBytes' => $maxFileBytes,
+            'maxRequestMb' => $this->megabytes($maxRequestBytes),
+            'maxRequestBytes' => $maxRequestBytes,
+        ];
+    }
+
+    private function phpSizeToBytes(string $value): int
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return 0;
+        }
+
+        $number = (float) $value;
+        $suffix = strtolower(substr($value, -1));
+        $multiplier = match ($suffix) {
+            'g' => 1024 * 1024 * 1024,
+            'm' => 1024 * 1024,
+            'k' => 1024,
+            default => 1,
+        };
+
+        return (int) round($number * $multiplier);
+    }
+
+    private function megabytes(int $bytes): int|float
+    {
+        $megabytes = round($bytes / 1024 / 1024, 1);
+
+        return $megabytes === floor($megabytes) ? (int) $megabytes : $megabytes;
     }
 }

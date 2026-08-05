@@ -7,6 +7,7 @@ use App\Http\Requests\UpdateWeeklyTaskTemplateRequest;
 use App\Models\TaskSession;
 use App\Models\WeeklyTaskTemplate;
 use App\Services\ChecklistMaterializer;
+use App\Services\AuditLogger;
 use App\Services\OperationalDate;
 use App\Services\WeeklyTaskScheduler;
 use Illuminate\Validation\ValidationException;
@@ -18,6 +19,7 @@ class WeeklyTaskTemplateController extends Controller
         ChecklistMaterializer $daily,
         WeeklyTaskScheduler $scheduler,
         OperationalDate $dates,
+        AuditLogger $audits,
     ) {
         $data = $request->validated();
         $daily->catchUpThrough($dates->today());
@@ -50,6 +52,11 @@ class WeeklyTaskTemplateController extends Controller
 
         $scheduler->materializeWeek($startsOn, true);
         $scheduler->refreshMaterializedWeeksFrom($startsOn);
+        $audits->admin('task_template.created', $template, [
+            'task_type' => 'weekly',
+            'task_name' => $template->task_name,
+            'due_weekday' => $template->due_weekday,
+        ]);
 
         return to_route('admin.index');
     }
@@ -60,6 +67,7 @@ class WeeklyTaskTemplateController extends Controller
         ChecklistMaterializer $daily,
         WeeklyTaskScheduler $scheduler,
         OperationalDate $dates,
+        AuditLogger $audits,
     ) {
         $data = $request->validated();
         $daily->catchUpThrough($dates->today());
@@ -81,6 +89,11 @@ class WeeklyTaskTemplateController extends Controller
         ])->save();
         $weeklyTaskTemplate->taskCollections()->sync($collectionIds);
         $scheduler->updateTemplateSnapshots($weeklyTaskTemplate);
+        $audits->admin('task_template.updated', $weeklyTaskTemplate, [
+            'task_type' => 'weekly',
+            'task_name' => $data['task_name'],
+            'due_weekday' => $data['due_weekday'],
+        ]);
 
         return to_route('admin.index');
     }
@@ -90,10 +103,15 @@ class WeeklyTaskTemplateController extends Controller
         ChecklistMaterializer $daily,
         WeeklyTaskScheduler $scheduler,
         OperationalDate $dates,
+        AuditLogger $audits,
     ) {
         $daily->catchUpThrough($dates->today());
         $scheduler->advanceThrough($dates->today());
         $scheduler->deactivateTemplate($weeklyTaskTemplate);
+        $audits->admin('task_template.archived', $weeklyTaskTemplate, [
+            'task_type' => 'weekly',
+            'task_name' => $weeklyTaskTemplate->task_name,
+        ]);
 
         return to_route('admin.index');
     }

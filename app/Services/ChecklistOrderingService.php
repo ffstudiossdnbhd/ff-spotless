@@ -26,6 +26,10 @@ class ChecklistOrderingService
             abort(403, 'Hanya tugasan hari ini boleh disusun semula.');
         }
 
+        if (! $this->dates->isWorkingDay($date)) {
+            abort(403, 'Tugasan hanya boleh disusun semula pada hari bekerja.');
+        }
+
         DB::transaction(function () use ($date, $sessionId, $items): void {
             $this->materializer->acquireTemplateSynchronizationLock();
 

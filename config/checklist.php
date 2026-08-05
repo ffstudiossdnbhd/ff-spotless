@@ -32,4 +32,20 @@ return [
     */
     'past_materialization_days' => (int) env('CHECKLIST_PAST_MATERIALIZATION_DAYS', 365),
     'future_materialization_days' => (int) env('CHECKLIST_FUTURE_MATERIALIZATION_DAYS', 365),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Evidence upload policy
+    |--------------------------------------------------------------------------
+    |
+    | These application limits must be matched by PHP's upload_max_filesize,
+    | post_max_size, and max_file_uploads settings. The dashboard exposes the
+    | effective lower limit when a host configuration is more restrictive.
+    |
+    */
+    'evidence' => [
+        'max_files' => (int) env('CHECKLIST_EVIDENCE_MAX_FILES', 5),
+        'max_file_kb' => (int) env('CHECKLIST_EVIDENCE_MAX_FILE_KB', 10240),
+        'max_request_kb' => (int) env('CHECKLIST_EVIDENCE_MAX_REQUEST_KB', 56320),
+    ],
 ];

@@ -6,7 +6,7 @@ services:
       - .:/var/www/html
       - app_vendor:/var/www/html/vendor
     command: >
-      sh -c "if [ ! -f vendor/.ffspotless-composer-lock ] || ! cmp -s composer.lock vendor/.ffspotless-composer-lock; then composer install --no-interaction --no-progress && cp composer.lock vendor/.ffspotless-composer-lock; fi; php artisan optimize:clear; exec apache2-foreground"
+      sh -c "if [ ! -f vendor/.ffspotless-composer-lock ] || ! cmp -s composer.lock vendor/.ffspotless-composer-lock; then composer install --no-interaction --no-progress && cp composer.lock vendor/.ffspotless-composer-lock; fi; mkdir -p storage/logs storage/framework/cache/data storage/framework/sessions storage/framework/views bootstrap/cache; chmod -R a+rwX storage/logs storage/framework bootstrap/cache; php artisan optimize:clear; chmod -R a+rwX storage/logs storage/framework bootstrap/cache; exec apache2-foreground"
 
   vite:
     image: node:22-alpine

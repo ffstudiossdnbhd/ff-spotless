@@ -7,6 +7,7 @@ use App\Http\Requests\StoreTaskSessionRequest;
 use App\Models\TaskSession;
 use App\Models\WeeklyTaskOccurrence;
 use App\Services\ChecklistMaterializer;
+use App\Services\AuditLogger;
 use App\Services\OperationalDate;
 use App\Services\WeeklyTaskScheduler;
 use Illuminate\Http\Request;
@@ -15,14 +16,15 @@ use Illuminate\Validation\ValidationException;
 
 class TaskSessionManagementController extends Controller
 {
-    public function store(StoreTaskSessionRequest $request)
+    public function store(StoreTaskSessionRequest $request, AuditLogger $audits)
     {
         $name = $request->validated('name');
-        TaskSession::query()->create([
+        $session = TaskSession::query()->create([
             'name' => $name,
             'sort_order' => (int) TaskSession::query()->max('sort_order') + 1,
             'is_active' => true,
         ]);
+        $audits->admin('session.created', $session, ['name' => $session->name]);
 
         return to_route('admin.index');
     }
@@ -33,6 +35,7 @@ class TaskSessionManagementController extends Controller
         ChecklistMaterializer $materializer,
         OperationalDate $dates,
         WeeklyTaskScheduler $weekly,
+        AuditLogger $audits,
     ) {
         $materializer->catchUpThrough($dates->today());
         $weekly->advanceThrough($dates->today());
@@ -47,11 +50,12 @@ class TaskSessionManagementController extends Controller
                 ->whereDate('week_start', '>=', $dates->today()->startOfWeek()->toDateString())
                 ->update(['session_name' => $name]);
         }, 3);
+        $audits->admin('session.updated', $taskSession, ['name' => $name]);
 
         return to_route('admin.index');
     }
 
-    public function reorder(ReorderTaskSessionsRequest $request)
+    public function reorder(ReorderTaskSessionsRequest $request, AuditLogger $audits)
     {
         $ids = array_map('intval', $request->validated('session_ids'));
         $active = TaskSession::query()->active()->orderBy('sort_order')->pluck('id')->map(fn ($id) => (int) $id)->all();
@@ -71,11 +75,12 @@ class TaskSessionManagementController extends Controller
                 TaskSession::query()->whereKey($id)->update(['sort_order' => $index + 1]);
             }
         }, 3);
+        $audits->admin('session.reordered', null, ['session_count' => count($ids)]);
 
         return to_route('admin.index');
     }
 
-    public function destroy(Request $request, TaskSession $taskSession)
+    public function destroy(Request $request, TaskSession $taskSession, AuditLogger $audits)
     {
         if (! $taskSession->is_active) {
             return to_route('admin.index');
@@ -90,6 +95,7 @@ class TaskSessionManagementController extends Controller
         }
 
         $taskSession->forceFill(['is_active' => false])->save();
+        $audits->admin('session.archived', $taskSession, ['name' => $taskSession->name]);
 
         return to_route('admin.index');
     }

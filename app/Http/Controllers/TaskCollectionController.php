@@ -4,22 +4,42 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreTaskCollectionRequest;
 use App\Models\TaskCollection;
+use App\Services\AuditLogger;
+use App\Services\ChecklistMaterializer;
+use App\Services\OperationalDate;
+use App\Services\WeeklyTaskScheduler;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class TaskCollectionController extends Controller
 {
-    public function store(StoreTaskCollectionRequest $request)
+    public function store(
+        StoreTaskCollectionRequest $request,
+        ChecklistMaterializer $daily,
+        WeeklyTaskScheduler $weekly,
+        OperationalDate $dates,
+        AuditLogger $audits,
+    )
     {
-        TaskCollection::query()->create([
+        $rotation = TaskCollection::query()->create([
             'name' => $request->validated('name'),
             'is_default' => false,
+            'rotation_order' => (int) TaskCollection::query()->max('rotation_order') + 1,
         ]);
+        $daily->refreshMaterializedDatesFrom($dates->today());
+        $weekly->refreshMaterializedWeeksFrom($dates->today());
+        $audits->admin('rotation.created', $rotation, ['name' => $rotation->name]);
 
         return to_route('admin.index');
     }
 
-    public function destroy(TaskCollection $taskCollection)
+    public function destroy(
+        TaskCollection $taskCollection,
+        ChecklistMaterializer $daily,
+        WeeklyTaskScheduler $weekly,
+        OperationalDate $dates,
+        AuditLogger $audits,
+    )
     {
         if ($taskCollection->is_default) {
             throw ValidationException::withMessages([
@@ -43,6 +63,9 @@ class TaskCollectionController extends Controller
         }
 
         $taskCollection->delete();
+        $daily->refreshMaterializedDatesFrom($dates->today());
+        $weekly->refreshMaterializedWeeksFrom($dates->today());
+        $audits->admin('rotation.deleted', $taskCollection, ['name' => $taskCollection->name]);
 
         return to_route('admin.index');
     }

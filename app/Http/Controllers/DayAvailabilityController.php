@@ -8,6 +8,7 @@ use App\Models\DailyChecklist;
 use App\Models\WeeklyTaskOccurrence;
 use App\Models\WeeklyTaskPostponement;
 use App\Services\ChecklistMaterializer;
+use App\Services\AuditLogger;
 use App\Services\OperationalDate;
 use App\Services\WeeklyTaskScheduler;
 use Illuminate\Support\Facades\DB;
@@ -20,12 +21,17 @@ class DayAvailabilityController extends Controller
         OperationalDate $dates,
         WeeklyTaskScheduler $scheduler,
         ChecklistMaterializer $materializer,
+        AuditLogger $audits,
     )
     {
         $data = $request->validated();
 
         if (! $dates->isToday($data['date'])) {
             abort(403, 'Hanya status hari ini boleh dikemas kini.');
+        }
+
+        if (! $dates->isWorkingDay($data['date'])) {
+            abort(403, 'Status MC hanya boleh dikemas kini pada hari bekerja.');
         }
 
         $isUnavailable = in_array($data['is_unavailable'], [true, 1, '1'], true);
@@ -85,6 +91,9 @@ class DayAvailabilityController extends Controller
         }, 3);
 
         $scheduler->advanceThrough($dates->today());
+        $audits->cleaner($isUnavailable ? 'availability.marked_unavailable' : 'availability.marked_available', null, [
+            'date' => $data['date'],
+        ]);
 
         return to_route('checklist.index', ['date' => $data['date']]);
     }

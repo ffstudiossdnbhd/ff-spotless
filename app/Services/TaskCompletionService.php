@@ -21,6 +21,7 @@ class TaskCompletionService
         private readonly WeeklyTaskScheduler $weekly,
         private readonly ChecklistMaterializer $materializer,
         private readonly EvidenceWatermarker $watermarker,
+        private readonly AuditLogger $audits,
     ) {}
 
     /**
@@ -64,6 +65,12 @@ class TaskCompletionService
                     'completion_note' => $note,
                     'completed_by_user_id' => null,
                 ])->save();
+
+                $this->audits->cleaner('task.completed', $locked, [
+                    'task_type' => 'daily',
+                    'task_name' => $locked->task_name,
+                    'task_date' => $date,
+                ]);
             }, 3);
         } catch (Throwable $exception) {
             $this->deleteStored($storedPaths);
@@ -114,6 +121,12 @@ class TaskCompletionService
                     'completed_on' => $date,
                     'completion_note' => $note,
                 ])->save();
+
+                $this->audits->cleaner('task.completed', $locked, [
+                    'task_type' => 'weekly',
+                    'task_name' => $locked->task_name,
+                    'task_date' => $date,
+                ]);
             }, 3);
         } catch (Throwable $exception) {
             $this->deleteStored($storedPaths);
@@ -125,6 +138,10 @@ class TaskCompletionService
     {
         if (! $this->dates->isToday($date)) {
             abort(403, 'Hanya senarai semak hari ini boleh dikemas kini.');
+        }
+
+        if (! $this->dates->isWorkingDay($date)) {
+            abort(403, 'Tugasan hanya boleh dikemas kini pada hari bekerja.');
         }
 
     }

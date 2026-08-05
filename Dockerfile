@@ -41,6 +41,8 @@ RUN apt-get update \
     && a2enmod headers rewrite \
     && rm -rf /var/lib/apt/lists/*
 
+COPY docker/php/uploads.ini /usr/local/etc/php/conf.d/zz-uploads.ini
+
 COPY docker/apache/laravel.conf /etc/apache2/conf-available/laravel.conf
 RUN a2enconf laravel \
     && sed -ri 's!/var/www/html!/var/www/html/public!g' /etc/apache2/sites-available/000-default.conf

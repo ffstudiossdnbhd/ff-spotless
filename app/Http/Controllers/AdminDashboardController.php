@@ -60,7 +60,8 @@ class AdminDashboardController extends Controller
 
         $collections = TaskCollection::query()
             ->orderByDesc('is_default')
-            ->orderBy('name')
+            ->orderBy('rotation_order')
+            ->orderBy('id')
             ->get();
 
         $collectionSchedules = TaskCollectionSchedule::query()

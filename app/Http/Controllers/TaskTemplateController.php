@@ -8,6 +8,7 @@ use App\Http\Requests\UpdateTaskTemplateRequest;
 use App\Models\TaskTemplate;
 use App\Models\TaskSession;
 use App\Services\ChecklistMaterializer;
+use App\Services\AuditLogger;
 use App\Services\OperationalDate;
 use App\Services\WeeklyTaskScheduler;
 use Illuminate\Support\Facades\DB;
@@ -20,6 +21,7 @@ class TaskTemplateController extends Controller
         ChecklistMaterializer $materializer,
         OperationalDate $dates,
         WeeklyTaskScheduler $weekly,
+        AuditLogger $audits,
     )
     {
         $data = $request->validated();
@@ -31,7 +33,7 @@ class TaskTemplateController extends Controller
             throw ValidationException::withMessages(['task_session_id' => 'Task session is not active.']);
         }
 
-        DB::transaction(function () use ($data): void {
+        $template = DB::transaction(function () use ($data): TaskTemplate {
             $collectionIds = $data['applies_to_all_collections'] ? [] : array_values(array_unique($data['task_collection_ids'] ?? []));
             $template = TaskTemplate::query()->create([
                 'task_name' => $data['task_name'],
@@ -44,9 +46,15 @@ class TaskTemplateController extends Controller
             ]);
 
             $template->taskCollections()->sync($collectionIds);
+
+            return $template;
         }, 3);
 
         $materializer->refreshMaterializedDatesFrom($dates->today());
+        $audits->admin('task_template.created', $template, [
+            'task_type' => 'daily',
+            'task_name' => $template->task_name,
+        ]);
 
         return to_route('admin.index');
     }
@@ -57,6 +65,7 @@ class TaskTemplateController extends Controller
         ChecklistMaterializer $materializer,
         OperationalDate $dates,
         WeeklyTaskScheduler $weekly,
+        AuditLogger $audits,
     ) {
         $data = $request->validated();
         $materializer->catchUpThrough($dates->today());
@@ -87,6 +96,10 @@ class TaskTemplateController extends Controller
         }, 3);
 
         $materializer->refreshMaterializedDatesFrom($dates->today());
+        $audits->admin('task_template.updated', $taskTemplate, [
+            'task_type' => 'daily',
+            'task_name' => $data['task_name'],
+        ]);
 
         return to_route('admin.index');
     }
@@ -97,6 +110,7 @@ class TaskTemplateController extends Controller
         ChecklistMaterializer $materializer,
         OperationalDate $dates,
         WeeklyTaskScheduler $weekly,
+        AuditLogger $audits,
     ) {
         $materializer->catchUpThrough($dates->today());
         $weekly->advanceThrough($dates->today());
@@ -105,6 +119,10 @@ class TaskTemplateController extends Controller
             $lockedTemplate->forceFill(['is_active' => false])->save();
         }, 3);
         $materializer->refreshMaterializedDatesFrom($dates->today());
+        $audits->admin('task_template.archived', $taskTemplate, [
+            'task_type' => 'daily',
+            'task_name' => $taskTemplate->task_name,
+        ]);
 
         return to_route('admin.index');
     }

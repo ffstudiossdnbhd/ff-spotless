@@ -3,8 +3,10 @@
 namespace App\Services;
 
 use App\Models\TaskCollection;
-use App\Models\TaskCollectionSchedule;
+use App\Models\RotationCycleSetting;
 use Carbon\CarbonImmutable;
+use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\Collection;
 use LogicException;
 
 class TaskCollectionResolver
@@ -15,6 +17,11 @@ class TaskCollectionResolver
     private array $activeByDate = [];
 
     private ?TaskCollection $defaultCollection = null;
+
+    /** @var Collection<int, TaskCollection>|null */
+    private ?Collection $rotations = null;
+
+    private ?CarbonImmutable $anchorWeekStart = null;
 
     public function default(): TaskCollection
     {
@@ -41,14 +48,47 @@ class TaskCollectionResolver
             return $this->activeByDate[$dateString];
         }
 
-        $schedule = TaskCollectionSchedule::query()
-            ->with('taskCollection')
-            ->whereDate('starts_on', '<=', $dateString)
-            ->whereDate('ends_on', '>=', $dateString)
-            ->orderBy('starts_on')
-            ->orderBy('id')
-            ->first();
+        $rotations = $this->rotations();
 
-        return $this->activeByDate[$dateString] = $schedule?->taskCollection ?? $this->default();
+        if ($rotations->isEmpty()) {
+            return $this->activeByDate[$dateString] = $this->default();
+        }
+
+        $weekStart = $date->startOfWeek(CarbonInterface::SUNDAY);
+        $daysSinceAnchor = $this->anchorWeekStart()->diffInDays($weekStart, false);
+        $weeksSinceAnchor = (int) floor($daysSinceAnchor / 7);
+        $index = (($weeksSinceAnchor % $rotations->count()) + $rotations->count()) % $rotations->count();
+
+        return $this->activeByDate[$dateString] = $rotations->values()->get($index);
+    }
+
+    /** @return Collection<int, TaskCollection> */
+    private function rotations(): Collection
+    {
+        if ($this->rotations instanceof Collection) {
+            return $this->rotations;
+        }
+
+        return $this->rotations = TaskCollection::query()
+            ->where('is_default', false)
+            ->orderBy('rotation_order')
+            ->orderBy('id')
+            ->get();
+    }
+
+    private function anchorWeekStart(): CarbonImmutable
+    {
+        if ($this->anchorWeekStart instanceof CarbonImmutable) {
+            return $this->anchorWeekStart;
+        }
+
+        $setting = RotationCycleSetting::query()->find(1);
+
+        if (! $setting instanceof RotationCycleSetting) {
+            throw new LogicException('The rotation cycle settings are missing.');
+        }
+
+        return $this->anchorWeekStart = $setting->anchor_week_start
+            ->startOfWeek(CarbonInterface::SUNDAY);
     }
 }

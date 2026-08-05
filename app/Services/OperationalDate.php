@@ -42,6 +42,13 @@ class OperationalDate
         return hash_equals($this->today()->toDateString(), $date);
     }
 
+    public function isWorkingDay(CarbonImmutable|string $date): bool
+    {
+        $value = is_string($date) ? $this->fromDateString($date) : $date;
+
+        return $value->dayOfWeekIso <= CarbonImmutable::FRIDAY;
+    }
+
     public function isWithinMaterializationWindow(CarbonImmutable $date): bool
     {
         $today = $this->today();

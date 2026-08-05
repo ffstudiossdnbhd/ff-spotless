@@ -14,7 +14,10 @@ class TaskReopenService
 {
     private const ADMIN_LABEL = 'Master admin';
 
-    public function __construct(private readonly OperationalDate $dates) {}
+    public function __construct(
+        private readonly OperationalDate $dates,
+        private readonly AuditLogger $audits,
+    ) {}
 
     public function reopenDaily(DailyChecklist $task, string $reason): void
     {
@@ -45,6 +48,7 @@ class TaskReopenService
                 evidenceCount: $evidenceCount,
                 reason: $reason,
                 occurredAt: $now,
+                subject: $locked,
             );
 
             $locked->forceFill([
@@ -85,6 +89,7 @@ class TaskReopenService
                 evidenceCount: $evidenceCount,
                 reason: $reason,
                 occurredAt: $now,
+                subject: $locked,
             );
 
             $locked->forceFill([
@@ -140,6 +145,7 @@ class TaskReopenService
         int $evidenceCount,
         string $reason,
         $occurredAt,
+        DailyChecklist|WeeklyTaskOccurrence $subject,
     ): void {
         TaskReopenAudit::query()->create([
             'task_type' => $taskType,
@@ -153,6 +159,16 @@ class TaskReopenService
             'reason' => $reason,
             'performed_by' => self::ADMIN_LABEL,
             'occurred_at' => $occurredAt,
+        ]);
+
+        $this->audits->admin('task.reopened', $subject, [
+            'task_type' => $taskType,
+            'task_id' => $taskId,
+            'task_name' => $taskName,
+            'session_name' => $sessionName,
+            'task_date' => $taskDate,
+            'reason' => $reason,
+            'invalidated_evidence_count' => $evidenceCount,
         ]);
     }
 }

@@ -24,6 +24,17 @@ class ChecklistMaterializer
     {
         $dateString = $date->toDateString();
 
+        if ($this->shouldSuppressWeekendTasks($date)) {
+            $this->materializeEmptyWeekend($date, $dateString);
+            $this->removeIncompleteWeekendRows($date, $dateString);
+
+            return DailyChecklist::query()
+                ->whereDate('date', $dateString)
+                ->withCount('evidence')
+                ->orderBy('id')
+                ->get();
+        }
+
         if (! $this->isMaterialized($dateString)) {
             DB::transaction(function () use ($date, $dateString): void {
                 $this->acquireTemplateSynchronizationLock();
@@ -181,6 +192,12 @@ class ChecklistMaterializer
     {
         $dateString = $date->toDateString();
 
+        if ($this->shouldSuppressWeekendTasks($date)) {
+            $this->removeIncompleteWeekendRows($date, $dateString);
+
+            return;
+        }
+
         DB::transaction(function () use ($date, $dateString): void {
             $this->acquireTemplateSynchronizationLock();
             $activeCollection = $this->collections->forDate($date);
@@ -254,6 +271,55 @@ class ChecklistMaterializer
                     'completed_by_user_id' => null,
                 ]);
             });
+        }, 3);
+    }
+
+    private function shouldSuppressWeekendTasks(CarbonImmutable $date): bool
+    {
+        return ! $this->dates->isWorkingDay($date)
+            && $date->greaterThanOrEqualTo($this->dates->today());
+    }
+
+    private function materializeEmptyWeekend(CarbonImmutable $date, string $dateString): void
+    {
+        if ($this->isMaterialized($dateString)) {
+            return;
+        }
+
+        DB::transaction(function () use ($date, $dateString): void {
+            $this->acquireTemplateSynchronizationLock();
+
+            if ($this->isMaterialized($dateString)) {
+                return;
+            }
+
+            if (! $this->dates->isWithinMaterializationWindow($date)) {
+                throw new ChecklistDateOutsideMaterializationWindow;
+            }
+
+            DB::table('checklist_materializations')->insert(['date' => $dateString]);
+        }, 3);
+    }
+
+    private function removeIncompleteWeekendRows(CarbonImmutable $date, string $dateString): void
+    {
+        DB::transaction(function () use ($date, $dateString): void {
+            $this->acquireTemplateSynchronizationLock();
+            $ids = DailyChecklist::query()
+                ->whereDate('date', $dateString)
+                ->where('is_completed', false)
+                ->pluck('id');
+
+            if ($ids->isEmpty()) {
+                return;
+            }
+
+            DB::table('checklist_item_positions')
+                ->where('item_type', 'daily')
+                ->whereIn('item_id', $ids)
+                ->delete();
+
+            DailyChecklist::query()->whereKey($ids)->delete();
         }, 3);
     }
 }

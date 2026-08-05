@@ -88,8 +88,9 @@ The Inertia application registers the Vite-generated service worker and includes
 - Every completion requires JPEG, PNG, or WebP evidence. Evidence is stored on
   Laravel's private `local` disk and is streamed only through an authenticated
   admin route. Do not create a public symlink to `storage/app/private`.
-- The upload UI reflects PHP's `max_file_uploads`, `upload_max_filesize`, and
-  `post_max_size`. Each individual image is additionally limited to 10 MB.
+- Evidence allows up to five JPEG, PNG, or WebP images, 10 MB each. Configure
+  PHP with `max_file_uploads=5`, `upload_max_filesize=10M`, and
+  `post_max_size=55M` (or stricter limits; the UI will show the effective cap).
 - Comparable missed-task and credit statistics begin on the date the feature
   migration is applied. Earlier completion history remains available.
 
@@ -170,7 +171,9 @@ written by PHP but cannot be served directly by Apache. Review the hosting
 account's PHP upload limits before enabling evidence uploads. Evidence photo
 watermarking requires the PHP `gd` extension with JPEG, PNG, and WebP support.
 Phone-photo orientation correction for JPEG evidence also requires the PHP
-`exif` extension.
+`exif` extension. In non-Docker hosting, set `max_file_uploads=5`,
+`upload_max_filesize=10M`, and `post_max_size=55M` through the host PHP
+configuration, then restart PHP before enabling evidence uploads.
 
 Changing `CHECKLIST_ADMIN_PASSWORD` in `private/.env` takes effect after the config cache is rebuilt and PHP has reloaded. Never deploy the development default of `12345678`; replace it with a strong secret in `private/.env`. The password is never stored in the session; the configured session only records successful master-admin authentication.
 

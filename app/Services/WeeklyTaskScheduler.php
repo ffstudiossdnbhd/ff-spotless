@@ -45,6 +45,10 @@ class WeeklyTaskScheduler
                 ->orderBy('id')
                 ->get()
                 ->filter(function (WeeklyTaskTemplate $template) use ($weekStart): bool {
+                    if ($template->due_weekday > CarbonImmutable::FRIDAY) {
+                        return false;
+                    }
+
                     if ($template->applies_to_all_collections) {
                         return true;
                     }
@@ -139,6 +143,11 @@ class WeeklyTaskScheduler
     public function forChecklistDate(CarbonImmutable $date): Collection
     {
         $today = $this->dates->today();
+
+        if (! $this->dates->isWorkingDay($date) && $date->greaterThanOrEqualTo($today)) {
+            return new Collection;
+        }
+
         $this->materializeWeek($date);
         $this->advanceThrough($date->lessThan($today) ? $date : $today);
         $query = WeeklyTaskOccurrence::query()
@@ -214,7 +223,7 @@ class WeeklyTaskScheduler
     {
         $from = $occurrence->scheduled_date;
 
-        if ($from->dayOfWeekIso >= 7) {
+        if ($from->dayOfWeekIso >= CarbonImmutable::FRIDAY) {
             $occurrence->forceFill([
                 'status' => 'missed',
                 'missed_reason' => $forcedReason ?? ($this->isUnavailable($from) ? 'unavailable' : 'incomplete'),

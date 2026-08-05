@@ -1,7 +1,8 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { router, usePage } from '@inertiajs/vue3';
 import Sortable from 'sortablejs';
+import SundayFirstDatePicker from '../Components/SundayFirstDatePicker.vue';
 
 const props = defineProps({
     mode: { type: String, default: 'welcome' },
@@ -11,13 +12,14 @@ const props = defineProps({
     currentDate: { type: String, default: '' },
     isReadOnly: { type: Boolean, default: true },
     dayUnavailable: { type: Boolean, default: false },
-    uploadLimits: { type: Object, default: () => ({ maxFiles: 20, maxFileMb: 10, uploadMax: '', postMax: '' }) },
+    uploadLimits: { type: Object, default: () => ({ maxFiles: 5, maxFileMb: 10, maxFileBytes: 10 * 1024 * 1024, maxRequestMb: 55, maxRequestBytes: 55 * 1024 * 1024 }) },
     templates: { type: [Array, Object], default: () => [] },
     weeklyTemplates: { type: [Array, Object], default: () => [] },
     collections: { type: [Array, Object], default: () => [] },
     collectionSchedules: { type: [Array, Object], default: () => [] },
     completedTasks: { type: [Array, Object], default: () => [] },
-    reopenAudits: { type: [Array, Object], default: () => [] },
+    auditLogs: { type: [Array, Object], default: () => ({ data: [], links: [] }) },
+    rotationCycleAnchor: { type: String, default: '' },
     statistics: { type: Object, default: null },
     workload: { type: Array, default: () => [] },
 });
@@ -28,10 +30,13 @@ const adminTab = ref('statistics');
 const selectedDate = ref(props.currentDate);
 const adminDate = ref(props.currentDate);
 const localTasks = ref([]);
-const theme = ref(typeof window !== 'undefined' ? (localStorage.getItem('ff-spotless-theme') || 'dark') : 'dark');
+const theme = ref(typeof window !== 'undefined' ? (localStorage.getItem('ff-spotless-theme') || 'light') : 'light');
 const notice = ref('');
 const actionError = ref('');
+const formErrors = ref({});
 const busy = ref(false);
+const mobileNavOpen = ref(false);
+const confirmation = ref(null);
 const adminLogin = ref('');
 const evidenceTask = ref(null);
 const evidenceFiles = ref([]);
@@ -43,8 +48,9 @@ const reopenReason = ref('');
 const editing = ref(null);
 const sessionEditing = ref(null);
 const sortables = [];
-let noticeTimer;
 let themeTransitionTimer;
+const statsFrom = ref('');
+const statsTo = ref('');
 
 const taskForm = ref({
     task_type: 'daily',
@@ -56,16 +62,9 @@ const taskForm = ref({
     due_weekday: 1,
     credit_hours: 1,
 });
-const dailyForm = ref({ task_name: '', task_session_id: '', task_collection_id: '', credit_hours: 1 });
-const weeklyForm = ref({ task_name: '', task_session_id: '', task_collection_id: '', due_weekday: 1, credit_hours: 1 });
 const collectionForm = ref({ name: '' });
 const collectionScheduleForm = ref(defaultCollectionScheduleForm());
 const collectionCalendarMonth = ref(currentTodayString().slice(0, 7));
-const collectionCalendarSelection = ref({
-    anchor: '',
-    focus: '',
-    dragging: false,
-});
 const sessionForm = ref({ name: '' });
 const editForm = ref({});
 const taskListFilters = ref({
@@ -76,9 +75,9 @@ const adminTabs = [
     { key: 'statistics', label: 'Dashboard' },
     { key: 'history', label: 'View History' },
     { key: 'audit', label: 'Audit Log' },
-    { key: 'sessions', label: 'Session Editor' },
-    { key: 'weekly', label: 'Weekly Task Editor' },
-    { key: 'daily', label: 'Daily Task Editor' },
+    { key: 'sessions', label: 'Work Sessions' },
+    { key: 'tasks', label: 'Manage Tasks' },
+    { key: 'collections', label: 'Rotations' },
 ];
 
 const activeSessions = computed(() => props.sessions.filter((session) => session.isActive));
@@ -101,18 +100,9 @@ const manageableCollections = computed(() => taskCollections.value.filter((colle
 const collectionSchedules = computed(() => collectionItems(props.collectionSchedules));
 const defaultCollection = computed(() => taskCollections.value.find((collection) => collection.isDefault) ?? taskCollections.value[0] ?? null);
 const collectionCalendarDays = computed(() => buildCollectionCalendarDays(collectionCalendarMonth.value));
-const selectedCollectionCalendarRange = computed(() => normalizedDateRange(
-    collectionCalendarSelection.value.anchor,
-    collectionCalendarSelection.value.focus,
-));
-const selectedCollectionSchedule = computed(() => {
-    const range = selectedCollectionCalendarRange.value;
-    if (!range) return null;
-
-    return collectionSchedules.value.find((item) => item.startsOn === range.starts_on && item.endsOn === range.ends_on) ?? null;
-});
 const history = computed(() => collectionItems(props.completedTasks));
-const reopenAudits = computed(() => collectionItems(props.reopenAudits));
+const auditLogs = computed(() => collectionItems(props.auditLogs));
+const auditLinks = computed(() => props.auditLogs?.links ?? []);
 const today = computed(() => currentTodayString());
 const isToday = computed(() => selectedDate.value === today.value);
 const adminIsToday = computed(() => adminDate.value === today.value);
@@ -120,8 +110,8 @@ const locked = computed(() => props.isReadOnly || props.dayUnavailable || busy.v
 const completedCount = computed(() => localTasks.value.filter((task) => task.completed).length);
 const progress = computed(() => localTasks.value.length ? Math.round((completedCount.value / localTasks.value.length) * 100) : 0);
 const trendChart = Object.freeze({
-    left: 100,
-    right: 520,
+    left: 54,
+    right: 536,
     top: 12,
     bottom: 82,
 });
@@ -148,6 +138,12 @@ watch(() => [props.mode, props.currentDate, props.tasks, props.dayUnavailable], 
     initializeSortables();
 }, { immediate: true, deep: true });
 
+watch(() => props.statistics, (statistics) => {
+    if (!statistics) return;
+    statsFrom.value = statistics.from;
+    statsTo.value = statistics.to;
+}, { immediate: true, deep: true });
+
 watch(theme, (value) => {
     if (typeof document === 'undefined') return;
     localStorage.setItem('ff-spotless-theme', value);
@@ -158,7 +154,21 @@ watch(theme, (value) => {
 watch(activeSessions, (sessions) => {
     const firstId = sessions[0]?.id ?? '';
     if (!taskForm.value.task_session_id) taskForm.value.task_session_id = firstId;
+    nextTick(() => {
+        if (screen.value === 'admin' && adminTab.value === 'sessions') initializeSessionSortables();
+    });
 }, { immediate: true });
+
+watch(adminTab, async () => {
+    await nextTick();
+    if (screen.value === 'admin' && adminTab.value === 'sessions') {
+        initializeSessionSortables();
+    } else if (screen.value === 'checklist') {
+        initializeSortables();
+    } else {
+        destroySortables();
+    }
+});
 
 watch(taskCollections, (collections) => {
     const firstId = collections.find((collection) => collection.isDefault)?.id ?? collections[0]?.id ?? '';
@@ -169,24 +179,9 @@ watch(taskCollections, (collections) => {
     }
 }, { immediate: true });
 
-watch(selectedCollectionCalendarRange, (range) => {
-    if (!range) return;
-    collectionScheduleForm.value.starts_on = range.starts_on;
-    collectionScheduleForm.value.ends_on = range.ends_on;
-});
-
-onMounted(() => {
-    if (typeof window !== 'undefined') {
-        window.addEventListener('mouseup', finishCalendarSelection);
-    }
-});
-
 onBeforeUnmount(() => {
     destroySortables();
     clearEvidenceFiles();
-    if (typeof window !== 'undefined') {
-        window.removeEventListener('mouseup', finishCalendarSelection);
-    }
     if (typeof window !== 'undefined') window.clearTimeout(themeTransitionTimer);
     if (typeof document !== 'undefined') document.documentElement.classList.remove('theme-transitioning');
 });
@@ -264,17 +259,6 @@ function isoWeekday(value) {
     return weekday === 0 ? 7 : weekday;
 }
 
-function weekStart(value) {
-    return dateOffset(value, 1 - isoWeekday(value));
-}
-
-function normalizedDateRange(start, end) {
-    if (!start || !end) return null;
-    return start <= end
-        ? { starts_on: start, ends_on: end }
-        : { starts_on: end, ends_on: start };
-}
-
 function monthStart(value) {
     if (!/^\d{4}-\d{2}$/.test(value || '')) return `${currentTodayString().slice(0, 7)}-01`;
     return `${value}-01`;
@@ -306,27 +290,12 @@ function nextCollectionCalendarMonth() {
 
 function goToCollectionCalendarToday() {
     collectionCalendarMonth.value = today.value.slice(0, 7);
-    clearCalendarSelection();
-}
-
-function scheduleForDate(value) {
-    return collectionSchedules.value.find((item) => item.startsOn <= value && item.endsOn >= value) ?? null;
-}
-
-function collectionForDate(value) {
-    const schedule = scheduleForDate(value);
-    if (schedule) {
-        return taskCollections.value.find((collection) => Number(collection.id) === Number(schedule.collectionId))
-            ?? { id: schedule.collectionId, name: schedule.collectionName, isDefault: false };
-    }
-
-    return null;
 }
 
 function collectionDisplayName(collection) {
     if (!collection) return '';
 
-    return collection.isDefault ? 'Always Active' : collection.name;
+    return collection.isDefault ? 'Always active' : collection.name;
 }
 
 function collectionDisplayNameById(collectionId, fallback = '') {
@@ -367,95 +336,87 @@ function shortCollectionName(name) {
 }
 
 function shouldShowCollectionCalendarPill(day) {
-    if (!day.schedule) return false;
+    return !!day.rotation && day.date === day.weekStart;
+}
 
-    return day.date === day.schedule.startsOn || isoWeekday(day.date) === 1 || Number(day.date.slice(8, 10)) === 1;
+function sundayIndex(value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return 0;
+    const [year, month, day] = value.split('-').map(Number);
+
+    return new Date(year, month - 1, day, 12).getDay();
+}
+
+function sundayWeekStart(value) {
+    return dateOffset(value, -sundayIndex(value));
+}
+
+function dateOrdinal(value) {
+    const [year, month, day] = value.split('-').map(Number);
+
+    return Math.floor(Date.UTC(year, month - 1, day) / 86400000);
+}
+
+function rotationForDate(value) {
+    const rotations = manageableCollections.value
+        .slice()
+        .sort((left, right) => (Number(left.rotationOrder) || Number.MAX_SAFE_INTEGER) - (Number(right.rotationOrder) || Number.MAX_SAFE_INTEGER));
+
+    if (!rotations.length) return defaultCollection.value;
+
+    return rotations[rotationCycleIndex(value, rotations.length)];
+}
+
+function rotationCycleIndex(value, rotationCount = manageableCollections.value.length) {
+    if (!rotationCount) return 0;
+
+    const anchor = props.rotationCycleAnchor || sundayWeekStart(today.value);
+    const weeksSinceAnchor = Math.floor((dateOrdinal(sundayWeekStart(value)) - dateOrdinal(sundayWeekStart(anchor))) / 7);
+    return ((weeksSinceAnchor % rotationCount) + rotationCount) % rotationCount;
 }
 
 function buildCollectionCalendarDays(value) {
     const firstDay = monthStart(value);
     const lastDay = dateOffset(shiftMonth(value, 1) + '-01', -1);
-    const gridStart = dateOffset(firstDay, 1 - isoWeekday(firstDay));
-    const gridEnd = dateOffset(lastDay, 7 - isoWeekday(lastDay));
+    const gridStart = sundayWeekStart(firstDay);
+    const gridEnd = dateOffset(lastDay, 6 - sundayIndex(lastDay));
     const days = [];
 
     for (let cursor = gridStart; cursor <= gridEnd; cursor = dateOffset(cursor, 1)) {
-        const schedule = scheduleForDate(cursor);
         days.push({
             date: cursor,
             dayNumber: Number(cursor.slice(8, 10)),
             inMonth: cursor.startsWith(`${value}-`),
             isToday: cursor === today.value,
-            collection: schedule
-                ? (taskCollections.value.find((collection) => Number(collection.id) === Number(schedule.collectionId))
-                    ?? { id: schedule.collectionId, name: schedule.collectionName, isDefault: false })
-                : null,
-            schedule,
+            isWeekend: [0, 6].includes(sundayIndex(cursor)),
+            weekStart: sundayWeekStart(cursor),
+            rotation: rotationForDate(cursor),
+            rotationWeek: manageableCollections.value.length ? rotationCycleIndex(cursor) + 1 : null,
         });
     }
 
     return days;
 }
 
-function startCalendarSelection(day) {
-    if (collectionCalendarSelection.value.anchor
-        && !collectionCalendarSelection.value.dragging
-        && collectionCalendarSelection.value.anchor === collectionCalendarSelection.value.focus) {
-        collectionCalendarSelection.value.dragging = true;
-        collectionCalendarSelection.value.focus = day.date;
-        return;
+function collectionCalendarDayTone(day) {
+    if (day.isWeekend) {
+        return day.inMonth ? 'border-zinc-700 bg-zinc-900/70' : 'border-zinc-800 bg-zinc-950/60';
     }
 
-    collectionCalendarSelection.value = {
-        anchor: day.date,
-        focus: day.date,
-        dragging: true,
-    };
+    return day.rotation
+        ? collectionDayTone(day.rotation.id)
+        : (day.inMonth ? 'border-zinc-700 bg-zinc-900' : 'border-zinc-800 bg-zinc-950/60');
 }
 
-function extendCalendarSelection(day) {
-    if (!collectionCalendarSelection.value.dragging) return;
-    collectionCalendarSelection.value.focus = day.date;
+function collectionCalendarPillTone(day) {
+    return day.isWeekend
+        ? 'border-zinc-600 bg-zinc-800/70 text-zinc-300'
+        : collectionTone(day.rotation?.id);
 }
 
-function finishCalendarSelection(day = null) {
-    if (day?.date) {
-        collectionCalendarSelection.value.focus = day.date;
-    }
-    if (!collectionCalendarSelection.value.anchor) return;
-    if (day?.date && collectionCalendarSelection.value.anchor === collectionCalendarSelection.value.focus) {
-        const schedule = scheduleForDate(day.date);
-        if (schedule) {
-            collectionCalendarSelection.value.anchor = schedule.startsOn;
-            collectionCalendarSelection.value.focus = schedule.endsOn;
-        }
-    }
-    collectionCalendarSelection.value.dragging = false;
-}
-
-function clearCalendarSelection() {
-    collectionCalendarSelection.value = {
-        anchor: '',
-        focus: '',
-        dragging: false,
-    };
-}
-
-function isCalendarDateSelected(value) {
-    const range = selectedCollectionCalendarRange.value;
-    return !!range && range.starts_on <= value && value <= range.ends_on;
-}
-
-function assignCalendarSelection() {
-    const range = selectedCollectionCalendarRange.value;
-    if (!range) {
-        fail({ calendar: ['Choose a date or drag a date range on the calendar first.'] }, 'Collection schedule could not be saved.');
-        return;
-    }
-
-    collectionScheduleForm.value.starts_on = range.starts_on;
-    collectionScheduleForm.value.ends_on = range.ends_on;
-    createCollectionSchedule();
+function auditActorTone(actorType) {
+    return actorType === 'cleaner'
+        ? 'border border-amber-400/40 bg-amber-500/10 text-amber-300'
+        : 'border border-sky-400/40 bg-sky-500/10 text-sky-300';
 }
 
 function weeklyCadenceLabel(item) {
@@ -498,21 +459,21 @@ function sessionCredits(items) {
 
 function taskCollectionSummary(item) {
     if (item.appliesToAllCollections) {
-        return 'All collections';
+        return 'All rotations';
     }
 
     return item.collectionNames?.length
         ? item.collectionNames.map((name, index) => collectionDisplayNameById(item.collectionIds?.[index], name)).join(', ')
-        : 'No collections';
+        : 'No rotations';
 }
 
 function taskCollectionPills(item) {
     if (item.appliesToAllCollections) {
-        return [{ key: 'all', name: 'All collections', collectionId: null }];
+        return [{ key: 'all', name: 'All rotations', collectionId: null }];
     }
 
     if (!item.collectionNames?.length) {
-        return [{ key: 'none', name: 'No collections', collectionId: null }];
+        return [{ key: 'none', name: 'No rotations', collectionId: null }];
     }
 
     return item.collectionNames.map((name, index) => {
@@ -566,11 +527,25 @@ function sessionTone(index) {
 }
 
 function displayDate(value) {
-    return formatDate(value, 'ms-MY');
+    return formatDate(value, 'ms-MY', {
+        weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    });
+}
+
+function displayChecklistWeekday(value) {
+    return formatDate(value, 'ms-MY', { weekday: 'long' });
+}
+
+function displayChecklistDate(value) {
+    return formatDate(value, 'ms-MY', {
+        day: 'numeric', month: 'long', year: 'numeric',
+    });
 }
 
 function displayAdminDate(value) {
-    return formatDate(value, 'en-MY');
+    return formatDate(value, 'en-MY', {
+        weekday: 'long', day: 'numeric', month: 'short', year: 'numeric',
+    });
 }
 
 function displayDateInput(value) {
@@ -578,11 +553,11 @@ function displayDateInput(value) {
     return `${value.slice(8, 10)}/${value.slice(5, 7)}/${value.slice(0, 4)}`;
 }
 
-function formatDate(value, locale) {
+function formatDate(value, locale, options) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return value;
     const [year, month, day] = value.split('-').map(Number);
     return new Intl.DateTimeFormat(locale, {
-        weekday: 'long', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kuala_Lumpur',
+        ...options, timeZone: 'Asia/Kuala_Lumpur',
     }).format(new Date(Date.UTC(year, month - 1, day, 12)));
 }
 
@@ -607,32 +582,90 @@ function formatTimestamp(value) {
 function setNotice(message) {
     actionError.value = '';
     notice.value = message;
-    clearTimeout(noticeTimer);
-    noticeTimer = setTimeout(() => notice.value = '', 4000);
 }
 
-function fail(errors, fallback) {
-    actionError.value = Object.values(errors ?? {}).flat()[0] ?? fallback;
+function closeStatus() {
     notice.value = '';
+    actionError.value = '';
 }
 
-function inertiaOptions(message, fallback, onSuccess = null) {
+function clearErrors(scope) {
+    if (!scope) {
+        formErrors.value = {};
+        return;
+    }
+
+    const next = { ...formErrors.value };
+    delete next[scope];
+    formErrors.value = next;
+}
+
+function errorFor(scope, field) {
+    const error = formErrors.value[scope]?.[field];
+    return Array.isArray(error) ? error[0] : (error ?? '');
+}
+
+function errorId(scope, field) {
+    return `${scope}-${field}-error`;
+}
+
+function validationAttrs(scope, field) {
+    const error = errorFor(scope, field);
+    return error ? { 'aria-invalid': 'true', 'aria-describedby': errorId(scope, field) } : {};
+}
+
+function fail(errors, fallback, scope = 'global') {
+    const normalized = Object.entries(errors ?? {}).reduce((result, [field, messages]) => ({
+        ...result,
+        [field]: Array.isArray(messages) ? messages : [messages],
+    }), {});
+    const message = Object.values(normalized).flat()[0] ?? fallback;
+    formErrors.value = { ...formErrors.value, [scope]: normalized };
+    actionError.value = message;
+    notice.value = '';
+    nextTick(() => document.querySelector('[data-error-summary]')?.focus());
+}
+
+function inertiaOptions(message, fallback, onSuccess = null, errorScope = 'global') {
     return {
         preserveScroll: true,
         preserveState: true,
-        onStart: () => busy.value = true,
+        onStart: () => {
+            busy.value = true;
+            clearErrors(errorScope);
+        },
         onSuccess: () => {
             setNotice(message);
             onSuccess?.();
         },
-        onError: (errors) => fail(errors, fallback),
+        onError: (errors) => fail(errors, fallback, errorScope),
         onFinish: () => busy.value = false,
     };
 }
 
+function selectAdminTab(tab) {
+    adminTab.value = tab.key;
+    mobileNavOpen.value = false;
+}
+
+function requestConfirmation({ title, description, confirmLabel, action }) {
+    confirmation.value = { title, description, confirmLabel, action };
+}
+
+function closeConfirmation() {
+    if (busy.value) return;
+    confirmation.value = null;
+}
+
+function confirmAction() {
+    const action = confirmation.value?.action;
+    confirmation.value = null;
+    action?.();
+}
+
 function loginAdmin() {
     router.post('/admin/login', { password: adminLogin.value }, inertiaOptions(
-        'Admin access opened.', 'Admin password was not accepted.', () => adminLogin.value = '',
+        'Admin access opened.', 'Admin password was not accepted.', () => adminLogin.value = '', 'login',
     ));
 }
 
@@ -681,14 +714,30 @@ function openEvidence(task) {
 }
 
 function selectEvidence(event) {
-    const files = [...evidenceFiles.value, ...Array.from(event.target.files ?? [])];
+    const selected = Array.from(event.target.files ?? []);
+    const files = [...evidenceFiles.value, ...selected];
     if (files.length > Number(props.uploadLimits.maxFiles)) {
-        fail({}, `Pelayan membenarkan maksimum ${props.uploadLimits.maxFiles} foto bagi satu penghantaran.`);
+        fail({ photos: [`Pilih maksimum ${props.uploadLimits.maxFiles} foto bagi satu penghantaran.`] }, 'Foto bukti tidak sah.', 'evidence');
         event.target.value = '';
         return;
     }
+    const maximumBytes = Number(props.uploadLimits.maxFileBytes) || Number(props.uploadLimits.maxFileMb) * 1024 * 1024;
+    const oversized = files.find((file) => file.size > maximumBytes);
+    if (oversized) {
+        fail({ photos: [`${oversized.name} melebihi had ${props.uploadLimits.maxFileMb} MB setiap foto.`] }, 'Foto bukti tidak sah.', 'evidence');
+        event.target.value = '';
+        return;
+    }
+    const maxRequestBytes = Number(props.uploadLimits.maxRequestBytes) || Number(props.uploadLimits.maxRequestMb) * 1024 * 1024;
+    const totalBytes = files.reduce((total, file) => total + file.size, 0);
+    if (totalBytes > maxRequestBytes) {
+        fail({ photos: [`Jumlah saiz foto melebihi had penghantaran ${props.uploadLimits.maxRequestMb} MB.`] }, 'Foto bukti tidak sah.', 'evidence');
+        event.target.value = '';
+        return;
+    }
+    clearErrors('evidence');
     evidenceFiles.value = files;
-    evidencePreviews.value.push(...Array.from(event.target.files ?? []).map((file) => URL.createObjectURL(file)));
+    evidencePreviews.value.push(...selected.map((file) => URL.createObjectURL(file)));
     event.target.value = '';
 }
 
@@ -713,7 +762,7 @@ function closeEvidence(force = false) {
 
 function completeTask() {
     if (!evidenceTask.value || !evidenceFiles.value.length) {
-        fail({}, 'Pilih sekurang-kurangnya satu foto bukti.');
+        fail({ photos: ['Pilih sekurang-kurangnya satu foto bukti.'] }, 'Foto bukti diperlukan.', 'evidence');
         return;
     }
     const form = new FormData();
@@ -722,7 +771,7 @@ function completeTask() {
     evidenceFiles.value.forEach((file) => form.append('photos[]', file));
     const task = evidenceTask.value;
     router.post(`/tasks/${task.type}/${task.id}/complete`, form, {
-        ...inertiaOptions('Tugasan selesai dengan bukti foto.', 'Tugasan tidak dapat diselesaikan.', () => closeEvidence(true)),
+        ...inertiaOptions('Tugasan selesai dengan bukti foto.', 'Tugasan tidak dapat diselesaikan.', () => closeEvidence(true), 'evidence'),
         forceFormData: true,
     });
 }
@@ -747,7 +796,7 @@ function reopenTask() {
     if (!reopeningTask.value) return;
     const reason = reopenReason.value.trim();
     if (!reason) {
-        fail({}, 'A reopen reason is required.');
+        fail({ reason: ['A reopen reason is required.'] }, 'A reopen reason is required.', 'reopen');
         return;
     }
 
@@ -756,6 +805,7 @@ function reopenTask() {
         'Task reopened. The prior evidence is preserved in the audit log.',
         'Task could not be reopened.',
         () => closeReopen(true),
+        'reopen',
     ));
 }
 
@@ -775,6 +825,25 @@ function initializeSortables() {
             onEnd: () => persistDomOrder(element, sessionId),
         }));
     });
+}
+
+function initializeSessionSortables() {
+    destroySortables();
+    if (screen.value !== 'admin' || adminTab.value !== 'sessions') return;
+    const element = document.querySelector('[data-sortable-work-sessions]');
+    if (!element) return;
+
+    sortables.push(Sortable.create(element, {
+        animation: 160,
+        handle: '.session-drag-handle',
+        ghostClass: 'opacity-40',
+        onEnd: () => {
+            const sessionIds = Array.from(element.querySelectorAll('[data-session-id]'))
+                .map((node) => Number(node.dataset.sessionId));
+            router.patch('/admin/sessions/reorder', { session_ids: sessionIds },
+                inertiaOptions('Session order saved.', 'Session order could not be saved.'));
+        },
+    }));
 }
 
 function persistDomOrder(element, sessionId) {
@@ -821,47 +890,26 @@ function createTask() {
         `${isWeekly ? 'Weekly' : 'Daily'} task added.`,
         `${isWeekly ? 'Weekly' : 'Daily'} task could not be added.`,
         () => taskForm.value = defaultTaskForm(),
-    ));
-}
-
-function createDaily() {
-    router.post('/admin/templates', {
-        task_name: dailyForm.value.task_name,
-        task_session_id: dailyForm.value.task_session_id,
-        applies_to_all_collections: false,
-        task_collection_ids: dailyForm.value.task_collection_id ? [Number(dailyForm.value.task_collection_id)] : [],
-        credit_hours: dailyForm.value.credit_hours,
-    }, inertiaOptions(
-        'Daily task added.', 'Daily task could not be added.',
-    ));
-}
-
-function createWeekly() {
-    router.post('/admin/weekly-templates', {
-        task_name: weeklyForm.value.task_name,
-        task_session_id: weeklyForm.value.task_session_id,
-        applies_to_all_collections: false,
-        task_collection_ids: weeklyForm.value.task_collection_id ? [Number(weeklyForm.value.task_collection_id)] : [],
-        due_weekday: weeklyForm.value.due_weekday,
-        credit_hours: weeklyForm.value.credit_hours,
-    }, inertiaOptions(
-        'Weekly task added.', 'Weekly task could not be added.',
+        'task',
     ));
 }
 
 function createCollection() {
     router.post('/admin/collections', collectionForm.value, inertiaOptions(
-        'Collection added.', 'Collection could not be added.', () => collectionForm.value.name = '',
+        'Rotation added.', 'Rotation could not be added.', () => collectionForm.value.name = '', 'collection',
     ));
 }
 
 function deleteCollection(collection) {
     if (collection.isDefault) return;
-    if (!confirm(`Delete the collection "${collection.name}"? This only works if it is no longer used by any task or schedule.`)) return;
-    router.delete(`/admin/collections/${collection.id}`, inertiaOptions(
-        'Collection deleted.',
-        'Collection could not be deleted.',
-    ));
+    requestConfirmation({
+        title: 'Delete rotation permanently?',
+        description: `Delete “${collection.name}” permanently. This is only possible when no task or schedule still uses it.`,
+        confirmLabel: 'Delete rotation',
+        action: () => router.delete(`/admin/collections/${collection.id}`, inertiaOptions(
+            'Rotation deleted.', 'Rotation could not be deleted.', null, 'collection',
+        )),
+    });
 }
 
 function createCollectionSchedule() {
@@ -869,22 +917,25 @@ function createCollectionSchedule() {
         'Collection schedule saved.',
         'Collection schedule could not be saved.',
         () => {
-            clearCalendarSelection();
             collectionScheduleForm.value = {
                 task_collection_id: defaultSchedulableCollectionId(),
                 starts_on: currentTodayString(),
                 ends_on: dateOffset(currentTodayString(), 6),
             };
         },
+        'collectionSchedule',
     ));
 }
 
 function deleteCollectionSchedule(schedule) {
-    if (!confirm(`Remove the ${schedule.collectionName} schedule from ${schedule.startsOn} to ${schedule.endsOn}?`)) return;
-    router.delete(`/admin/collection-schedules/${schedule.id}`, inertiaOptions(
-        'Collection schedule removed.',
-        'Collection schedule could not be removed.',
-    ));
+    requestConfirmation({
+        title: 'Remove collection date range?',
+        description: `The ${schedule.collectionName} collection will stop applying from ${displayAdminDate(schedule.startsOn)} to ${displayAdminDate(schedule.endsOn)}. Those dates will use the Always Active collection.`,
+        confirmLabel: 'Remove date range',
+        action: () => router.delete(`/admin/collection-schedules/${schedule.id}`, inertiaOptions(
+            'Collection schedule removed.', 'Collection schedule could not be removed.', null, 'collectionSchedule',
+        )),
+    });
 }
 
 function openEdit(kind, item) {
@@ -904,19 +955,25 @@ function openEdit(kind, item) {
 function saveEdit() {
     const base = editForm.value.task_type === 'weekly' ? '/admin/weekly-templates' : '/admin/templates';
     router.patch(`${base}/${editing.value.item.id}`, normalizeTaskPayload(editForm.value), inertiaOptions(
-        'Template updated.', 'Template could not be updated.', () => editing.value = null,
+        'Template updated.', 'Template could not be updated.', () => editing.value = null, 'taskEdit',
     ));
 }
 
 function deleteTemplate(kind, item) {
-    if (!confirm(`Archive "${item.taskName}"? History records will be kept.`)) return;
     const base = kind === 'daily' ? '/admin/templates' : '/admin/weekly-templates';
-    router.delete(`${base}/${item.id}`, inertiaOptions('Template archived.', 'Template could not be archived.'));
+    requestConfirmation({
+        title: 'Archive task?',
+        description: `“${item.taskName}” will stop appearing on new checklists. Existing history and completed records will be kept.`,
+        confirmLabel: 'Archive task',
+        action: () => router.delete(`${base}/${item.id}`, inertiaOptions(
+            'Template archived.', 'Template could not be archived.', null, 'task',
+        )),
+    });
 }
 
 function createSession() {
     router.post('/admin/sessions', sessionForm.value, inertiaOptions(
-        'Session added.', 'Session could not be added.', () => sessionForm.value.name = '',
+        'Session added.', 'Session could not be added.', () => sessionForm.value.name = '', 'session',
     ));
 }
 
@@ -927,38 +984,31 @@ function editSession(session) {
 
 function saveSession() {
     router.patch(`/admin/sessions/${sessionEditing.value.id}`, editForm.value, inertiaOptions(
-        'Session name updated.', 'Session could not be updated.', () => sessionEditing.value = null,
+        'Session name updated.', 'Session could not be updated.', () => sessionEditing.value = null, 'sessionEdit',
     ));
 }
 
 function archiveSession(session) {
-    if (!confirm(`Archive session "${session.name}"?`)) return;
-    router.delete(`/admin/sessions/${session.id}`, inertiaOptions('Session archived.', 'Session could not be archived.'));
-}
-
-function moveSession(index, direction) {
-    const ordered = [...activeSessions.value];
-    const target = index + direction;
-    if (target < 0 || target >= ordered.length) return;
-    [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
-    router.patch('/admin/sessions/reorder', { session_ids: ordered.map((session) => session.id) },
-        inertiaOptions('Session order saved.', 'Session order could not be saved.'));
+    requestConfirmation({
+        title: 'Archive work session?',
+        description: `“${session.name}” will be hidden from new tasks. Archive is only available after every active task has been moved to another session.`,
+        confirmLabel: 'Archive session',
+        action: () => router.delete(`/admin/sessions/${session.id}`, inertiaOptions(
+            'Session archived.', 'Session could not be archived.', null, 'session',
+        )),
+    });
 }
 
 function statsPreset(days) {
     adminTab.value = 'statistics';
-    openAdmin(adminDate.value, {
-        stats_from: dateOffset(today.value, -(days - 1)),
-        stats_to: today.value,
-    });
+    statsFrom.value = dateOffset(today.value, -(days - 1));
+    statsTo.value = today.value;
+    openAdmin(adminDate.value, { stats_from: statsFrom.value, stats_to: statsTo.value });
 }
 
-function customStats(event) {
-    const form = new FormData(event.target);
-    openAdmin(adminDate.value, {
-        stats_from: form.get('stats_from'),
-        stats_to: form.get('stats_to'),
-    });
+function customStats() {
+    if (!statsFrom.value || !statsTo.value || statsFrom.value > statsTo.value) return;
+    openAdmin(adminDate.value, { stats_from: statsFrom.value, stats_to: statsTo.value });
 }
 
 function trendLinePoints(metric) {
@@ -983,33 +1033,68 @@ function trendPointY(value) {
 }
 
 function trendDate(value) {
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
-    return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
+    return formatDate(value, 'en-MY', { day: '2-digit', month: 'short' });
 }
 
 function trendWeekday(value) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return '';
     const [year, month, day] = value.split('-').map(Number);
     return new Intl.DateTimeFormat('en-MY', {
-        weekday: 'long', timeZone: 'Asia/Kuala_Lumpur',
+        weekday: 'short', timeZone: 'Asia/Kuala_Lumpur',
     }).format(new Date(Date.UTC(year, month - 1, day, 12)));
 }
 
-function showTrendLabel(index, length) {
-    const interval = Math.ceil(Math.max(length, 1) / 7);
-    return index === 0 || index === length - 1 || index % interval === 0;
+function auditActionLabel(action) {
+    return {
+        'admin.login_succeeded': 'Admin logged in',
+        'admin.login_failed': 'Admin login failed',
+        'admin.logout': 'Admin logged out',
+        'task.completed': 'Task completed',
+        'task.reopened': 'Task reopened',
+        'checklist.reordered': 'Checklist reordered',
+        'session.created': 'Work session added',
+        'session.updated': 'Work session updated',
+        'session.reordered': 'Work sessions reordered',
+        'session.archived': 'Work session archived',
+        'task_template.created': 'Task added',
+        'task_template.updated': 'Task updated',
+        'task_template.archived': 'Task archived',
+        'rotation.created': 'Rotation added',
+        'rotation.deleted': 'Rotation deleted',
+        'availability.marked_unavailable': 'Marked unavailable',
+        'availability.marked_available': 'Marked available',
+    }[action] ?? action.replaceAll('.', ' ');
 }
 
-function chooseAdminDate(event) {
-    const date = event.target.value;
+function auditDetails(audit) {
+    const details = audit.metadata ?? {};
+    return [details.task_name, details.name, details.task_date ?? details.date, details.reason]
+        .filter(Boolean)
+        .join(' - ');
+}
+
+function openAuditPage(url) {
+    if (!url) return;
+    router.get(url, {}, { preserveScroll: true, preserveState: true });
+}
+
+function auditLinkLabel(label) {
+    return String(label ?? '')
+        .replace('&laquo;', '‹')
+        .replace('&raquo;', '›')
+        .replace(/<[^>]*>/g, '');
+}
+
+function chooseAdminDate(date) {
     if (date) openAdmin(date);
 }
 </script>
 
 <template>
     <div :class="theme === 'light' ? 'theme-light' : 'theme-dark'" class="min-h-screen bg-[#121212] text-zinc-100">
-        <div v-if="notice || actionError" class="fixed inset-x-4 top-4 z-[80] mx-auto max-w-lg rounded-xl border px-4 py-3 text-sm font-semibold shadow-2xl" :class="actionError ? 'border-rose-500/40 bg-rose-950 text-rose-100' : 'border-emerald-500/40 bg-emerald-950 text-emerald-100'">
-            {{ actionError || notice }}
+        <div v-if="notice || actionError" data-error-summary tabindex="-1" class="fixed inset-x-4 top-4 z-[80] mx-auto flex max-w-lg items-start gap-3 rounded-xl border px-4 py-3 text-sm font-semibold shadow-2xl" :class="actionError ? 'border-rose-500/40 bg-rose-950 text-rose-100' : 'border-emerald-500/40 bg-emerald-950 text-emerald-100'" :role="actionError ? 'alert' : 'status'" aria-live="polite">
+            <span class="min-w-0 flex-1">{{ actionError || notice }}</span>
+            <button type="button" class="small-button shrink-0" aria-label="Dismiss notification" @click="closeStatus">Dismiss</button>
         </div>
 
         <main v-if="screen === 'welcome'" class="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12 text-center">
@@ -1024,7 +1109,9 @@ function chooseAdminDate(event) {
             <button class="mb-8 w-fit text-sm text-zinc-400" @click="screen = 'welcome'">&lt; Back</button>
             <h1 class="text-center text-2xl font-black">Admin Access</h1>
             <form class="mt-7 space-y-3" @submit.prevent="loginAdmin">
-                <input v-model="adminLogin" required type="password" autocomplete="current-password" class="h-14 w-full rounded-2xl border border-zinc-700 bg-zinc-900 px-4 text-center tracking-widest outline-none focus:border-[#ED4264]" placeholder="********">
+                <label class="form-label text-center" for="admin-password">Admin password</label>
+                <input id="admin-password" v-model="adminLogin" required type="password" autocomplete="current-password" class="h-14 w-full rounded-2xl border border-zinc-700 bg-zinc-900 px-4 text-center tracking-widest outline-none focus:border-[#ED4264]" placeholder="********" v-bind="validationAttrs('login', 'password')">
+                <p v-if="errorFor('login', 'password')" :id="errorId('login', 'password')" class="field-error">{{ errorFor('login', 'password') }}</p>
                 <button :disabled="busy" class="h-14 w-full rounded-2xl bg-gradient-to-r from-[#ED4264] to-[#FFEDBC] font-black text-zinc-950 disabled:opacity-50">Log in</button>
             </form>
         </main>
@@ -1041,13 +1128,15 @@ function chooseAdminDate(event) {
                         <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                             <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z" stroke-linejoin="round"></path>
                         </svg>
+                        <span>{{ theme === 'light' ? 'Light' : 'Dark' }}</span>
                     </button>
                 </div>
                 <div class="mt-4 flex items-center gap-3">
                     <button :disabled="busy" class="h-10 w-10 rounded-xl border border-zinc-700" @click="openChecklist(dateOffset(selectedDate, -1))">&lt;</button>
                     <button class="min-w-0 flex-1 text-center" @click="openChecklist()">
-                        <span class="block text-sm font-black">{{ displayDate(selectedDate) }}</span>
-                        <span v-if="!isToday" class="text-[10px] font-bold uppercase text-[#ED4264]">Kembali ke hari ini</span>
+                        <span class="checklist-date-weekday block text-sm text-white">{{ displayChecklistWeekday(selectedDate) }}</span>
+                        <span class="checklist-date-value mt-0.5 block text-xs text-zinc-400">{{ displayChecklistDate(selectedDate) }}</span>
+                        <span v-if="!isToday" class="text-xs font-bold uppercase text-[#ED4264]">Kembali ke hari ini</span>
                     </button>
                     <button :disabled="busy" class="h-10 w-10 rounded-xl border border-zinc-700" @click="openChecklist(dateOffset(selectedDate, 1))">&gt;</button>
                 </div>
@@ -1064,17 +1153,19 @@ function chooseAdminDate(event) {
                 <section v-for="(session, sessionIndex) in sessions" :key="session.id" v-show="sessionTasks(session.id).length">
                     <header class="mb-3 flex items-center justify-between">
                         <h2 class="font-black uppercase tracking-wider" :class="sessionTone(sessionIndex)">{{ session.name }}</h2>
-                        <span class="rounded-full border border-zinc-700 px-2.5 py-1 text-[10px] font-bold text-zinc-400">{{ sessionCredits(sessionTasks(session.id)) }} jam kredit</span>
+                        <span class="rounded-full border border-zinc-700 px-2.5 py-1 text-xs font-bold text-zinc-400">{{ sessionCredits(sessionTasks(session.id)) }} jam kredit</span>
                     </header>
                     <div class="space-y-2" :data-sortable-session="session.id">
                         <article v-for="(task, taskIndex) in sessionTasks(session.id)" :key="task.key" :data-task-key="task.key" class="flex items-center gap-2 rounded-2xl border p-3" :class="dayUnavailable && !task.completed ? 'border-zinc-800 bg-zinc-900/40 opacity-60' : 'border-zinc-700 bg-zinc-900'">
-                            <button v-if="isToday && !dayUnavailable" class="drag-handle cursor-grab px-1 text-lg text-zinc-500" aria-label="Seret untuk menyusun">::</button>
+                            <button v-if="isToday && !dayUnavailable" class="drag-handle inline-flex h-8 w-6 cursor-grab items-center justify-center text-zinc-500" aria-label="Seret untuk menyusun">
+                                <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5"><circle cx="8" cy="5" r="1.7"></circle><circle cx="16" cy="5" r="1.7"></circle><circle cx="8" cy="12" r="1.7"></circle><circle cx="16" cy="12" r="1.7"></circle><circle cx="8" cy="19" r="1.7"></circle><circle cx="16" cy="19" r="1.7"></circle></svg>
+                            </button>
                             <button class="min-w-0 flex-1 text-left" :class="dayUnavailable && !task.completed ? 'cursor-not-allowed' : ''" :disabled="locked || task.completed" @click="openEvidence(task)">
                                 <span class="flex items-center gap-2">
                                     <span v-if="!dayUnavailable" class="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border-2" :class="task.completed ? 'border-[#ED4264] bg-[#ED4264] text-white' : 'border-zinc-600'"><span v-if="task.completed">&#10003;</span></span>
                                     <span class="min-w-0">
                                         <span class="block text-sm font-semibold" :class="task.completed ? 'text-zinc-500 line-through' : dayUnavailable ? 'text-zinc-600' : 'text-zinc-100'">{{ task.text }}</span>
-                                        <span class="mt-1 flex flex-wrap gap-2 text-[10px] font-bold uppercase text-zinc-500">
+                                        <span class="mt-1 flex flex-wrap gap-2 text-xs font-bold uppercase text-zinc-500">
                                             <span>{{ task.creditHours }} jam</span>
                                             <template v-if="task.isWeekly">
                                                 <span aria-hidden="true">|</span>
@@ -1089,8 +1180,8 @@ function chooseAdminDate(event) {
                                 </span>
                             </button>
                             <div v-if="isToday && !dayUnavailable" class="flex flex-col gap-1">
-                                <button class="text-xs text-zinc-500 disabled:opacity-20" :disabled="taskIndex === 0 || busy" @click="moveTask(session.id, task.key, -1)">^</button>
-                                <button class="text-xs text-zinc-500 disabled:opacity-20" :disabled="taskIndex === sessionTasks(session.id).length - 1 || busy" @click="moveTask(session.id, task.key, 1)">v</button>
+                                <button class="small-button inline-flex h-8 w-8 items-center justify-center p-0 text-zinc-300 disabled:opacity-20" aria-label="Move task up" title="Move task up" :disabled="taskIndex === 0 || busy" @click="moveTask(session.id, task.key, -1)"><svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" class="h-3 w-3"><path d="m10 5 5 6H5l5-6Z"></path></svg></button>
+                                <button class="small-button inline-flex h-8 w-8 items-center justify-center p-0 text-zinc-300 disabled:opacity-20" aria-label="Move task down" title="Move task down" :disabled="taskIndex === sessionTasks(session.id).length - 1 || busy" @click="moveTask(session.id, task.key, 1)"><svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" class="h-3 w-3"><path d="m5 9 5 6 5-6H5Z"></path></svg></button>
                             </div>
                         </article>
                     </div>
@@ -1111,11 +1202,11 @@ function chooseAdminDate(event) {
         <main v-else-if="screen === 'admin'" class="min-h-screen lg:grid lg:grid-cols-[18rem_1fr]">
             <aside class="sticky top-0 hidden h-screen flex-col border-r border-zinc-800 bg-[#121212]/95 px-5 py-6 lg:flex">
                 <div>
-                    <p class="text-[10px] font-black uppercase tracking-[.2em] text-[#ED4264]">Admin</p>
+                    <p class="text-xs font-black uppercase tracking-[.2em] text-[#ED4264]">Admin</p>
                     <h1 class="mt-1 text-xl font-black">FF Spotless</h1>
                 </div>
                 <nav class="mt-8 space-y-2">
-                    <button v-for="tab in adminTabs" :key="tab.key" class="admin-tab w-full rounded-xl border px-4 py-3 text-left text-sm font-bold" :class="adminTab === tab.key ? 'admin-tab-active border-[#ED4264]/40 bg-[#ED4264]/10 text-rose-200' : 'border-transparent text-zinc-400 hover:border-zinc-700 hover:text-zinc-100'" @click="adminTab = tab.key">{{ tab.label }}</button>
+                    <button v-for="tab in adminTabs" :key="tab.key" class="admin-tab w-full rounded-xl border px-4 py-3 text-left text-sm font-bold" :class="adminTab === tab.key ? 'admin-tab-active border-[#ED4264]/40 bg-[#ED4264]/10 text-rose-200' : 'border-transparent text-zinc-400 hover:border-zinc-700 hover:text-zinc-100'" :aria-current="adminTab === tab.key ? 'page' : undefined" @click="selectAdminTab(tab)">{{ tab.label }}</button>
                 </nav>
                 <div class="mt-auto flex items-center gap-2">
                     <button class="h-10 flex-1 rounded-lg border border-zinc-700 px-3 text-xs font-bold text-rose-300" @click="logoutAdmin">Log out</button>
@@ -1127,6 +1218,7 @@ function chooseAdminDate(event) {
                         <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                             <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z" stroke-linejoin="round"></path>
                         </svg>
+                        <span>{{ theme === 'light' ? 'Light' : 'Dark' }}</span>
                     </button>
                 </div>
             </aside>
@@ -1135,10 +1227,11 @@ function chooseAdminDate(event) {
                 <header class="sticky top-0 z-30 border-b border-zinc-800 bg-[#121212]/95 px-5 py-4 backdrop-blur lg:hidden">
                     <div class="flex items-center justify-between">
                         <div>
-                            <p class="text-[10px] font-black uppercase tracking-[.2em] text-[#ED4264]">Admin</p>
+                            <p class="text-xs font-black uppercase tracking-[.2em] text-[#ED4264]">Admin</p>
                             <h1 class="text-lg font-black">FF Spotless</h1>
                         </div>
                         <div class="flex gap-2">
+                            <button type="button" class="h-10 rounded-lg border border-zinc-700 px-3 text-xs font-bold" :aria-expanded="mobileNavOpen" aria-controls="admin-mobile-menu" @click="mobileNavOpen = !mobileNavOpen">Menu</button>
                             <button class="h-10 rounded-lg border border-zinc-700 px-3 text-xs font-bold" @click="logoutAdmin">Log out</button>
                             <button type="button" class="theme-toggle shrink-0 rounded-lg border border-zinc-700" :aria-label="themeToggleLabel" :title="themeToggleLabel" @click="toggleTheme">
                                 <svg v-if="theme === 'light'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
@@ -1148,11 +1241,12 @@ function chooseAdminDate(event) {
                                 <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                                     <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z" stroke-linejoin="round"></path>
                                 </svg>
+                                <span>{{ theme === 'light' ? 'Light' : 'Dark' }}</span>
                             </button>
                         </div>
                     </div>
-                    <nav class="mt-4 flex gap-2 overflow-x-auto pb-1">
-                        <button v-for="tab in adminTabs" :key="tab.key" class="admin-tab shrink-0 rounded-xl border px-3 py-2 text-xs font-bold" :class="adminTab === tab.key ? 'admin-tab-active border-[#ED4264]/40 bg-[#ED4264]/10 text-rose-200' : 'border-zinc-700 text-zinc-400'" @click="adminTab = tab.key">{{ tab.label }}</button>
+                    <nav v-if="mobileNavOpen" id="admin-mobile-menu" class="mt-4 grid gap-2 rounded-xl border border-zinc-700 bg-zinc-900 p-2 shadow-xl" aria-label="Admin navigation">
+                        <button v-for="tab in adminTabs" :key="tab.key" class="admin-tab rounded-lg border px-3 py-3 text-left text-sm font-bold" :class="adminTab === tab.key ? 'admin-tab-active border-[#ED4264]/40 bg-[#ED4264]/10 text-rose-200' : 'border-zinc-700 text-zinc-300'" :aria-current="adminTab === tab.key ? 'page' : undefined" @click="selectAdminTab(tab)">{{ tab.label }}</button>
                     </nav>
                 </header>
 
@@ -1167,10 +1261,10 @@ function chooseAdminDate(event) {
                     <details v-if="adminTab === 'tasks'" class="group mb-4 rounded-xl border border-violet-400/30 bg-violet-400/5">
                         <summary class="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 px-3 py-2 marker:hidden">
                             <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                                <p class="text-[9px] font-black uppercase tracking-[0.16em] text-violet-300">Manage Tasks help</p>
+                                <p class="text-xs font-black uppercase tracking-[0.16em] text-violet-300">Manage Tasks help</p>
                                 <p class="truncate text-xs font-bold text-zinc-200">How to decide where a task appears</p>
                             </div>
-                            <span class="rounded-full border border-violet-400/30 bg-violet-400/10 px-2 py-0.5 text-[9px] font-black uppercase text-violet-200 transition group-open:bg-violet-400/20">Open</span>
+                            <span class="rounded-full border border-violet-400/30 bg-violet-400/10 px-2 py-0.5 text-xs font-black uppercase text-violet-200 transition group-open:bg-violet-400/20">Open</span>
                         </summary>
                         <div class="grid gap-1.5 px-3 pb-3 text-[11px] text-zinc-300 md:grid-cols-2 xl:grid-cols-4">
                             <div class="rounded-lg border border-zinc-700 bg-zinc-950/50 p-2.5">
@@ -1183,11 +1277,11 @@ function chooseAdminDate(event) {
                             </div>
                             <div class="rounded-lg border border-zinc-700 bg-zinc-950/50 p-2.5">
                                 <p class="font-black text-zinc-100">Single or multiple</p>
-                                <p class="mt-0.5 text-zinc-400">Use Single for one collection, or Multiple when the same task belongs to several sets.</p>
+                                <p class="mt-0.5 text-zinc-400">Use Single for one rotation, or Multiple when the same task belongs to several rotations.</p>
                             </div>
                             <div class="rounded-lg border border-zinc-700 bg-zinc-950/50 p-2.5">
                                 <p class="font-black text-zinc-100">Find before editing</p>
-                                <p class="mt-0.5 text-zinc-400">Use the filters to check which collection a task belongs to before changing it.</p>
+                                <p class="mt-0.5 text-zinc-400">Use the filters to check which rotation a task belongs to before changing it.</p>
                             </div>
                         </div>
                     </details>
@@ -1195,122 +1289,77 @@ function chooseAdminDate(event) {
                     <details v-if="adminTab === 'collections'" class="group mb-4 rounded-xl border border-sky-400/30 bg-sky-400/5">
                         <summary class="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 px-3 py-2 marker:hidden">
                             <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                                <p class="text-[9px] font-black uppercase tracking-[0.16em] text-sky-300">Task Collections help</p>
-                                <p class="truncate text-xs font-bold text-zinc-200">How collection dates work</p>
+                                <p class="text-xs font-black uppercase tracking-[0.16em] text-sky-300">Rotation help</p>
+                                <p class="truncate text-xs font-bold text-zinc-200">How the weekly cycle works</p>
                             </div>
-                            <span class="rounded-full border border-sky-400/30 bg-sky-400/10 px-2 py-0.5 text-[9px] font-black uppercase text-sky-200 transition group-open:bg-sky-400/20">Open</span>
+                            <span class="rounded-full border border-sky-400/30 bg-sky-400/10 px-2 py-0.5 text-xs font-black uppercase text-sky-200 transition group-open:bg-sky-400/20">Open</span>
                         </summary>
                         <div class="grid gap-1.5 px-3 pb-3 text-[11px] text-zinc-300 md:grid-cols-2 xl:grid-cols-4">
                             <div class="rounded-lg border border-zinc-700 bg-zinc-950/50 p-2.5">
-                                <p class="font-black text-zinc-100">1. Always Active</p>
-                                <p class="mt-0.5 text-zinc-400">Use this for tasks that must appear every day.</p>
+                                <p class="font-black text-zinc-100">1. Always active</p>
+                                <p class="mt-0.5 text-zinc-400">Use this for tasks that appear on every working day.</p>
                             </div>
                             <div class="rounded-lg border border-zinc-700 bg-zinc-950/50 p-2.5">
-                                <p class="font-black text-zinc-100">2. Custom collections</p>
-                                <p class="mt-0.5 text-zinc-400">Create sets like Heavy Duty or Light Duty when tasks change by date.</p>
+                                <p class="font-black text-zinc-100">2. Rotations</p>
+                                <p class="mt-0.5 text-zinc-400">Create rotations such as Heavy Duty or Light Duty; each owns one week.</p>
                             </div>
                             <div class="rounded-lg border border-zinc-700 bg-zinc-950/50 p-2.5">
-                                <p class="font-black text-zinc-100">3. Calendar dates</p>
-                                <p class="mt-0.5 text-zinc-400">Assign a custom collection to the date range when it should be active.</p>
+                                <p class="font-black text-zinc-100">3. Weekly cycle</p>
+                                <p class="mt-0.5 text-zinc-400">The order repeats automatically from Sunday through Saturday.</p>
                             </div>
                             <div class="rounded-lg border border-zinc-700 bg-zinc-950/50 p-2.5">
-                                <p class="font-black text-zinc-100">4. Task collection choice</p>
-                                <p class="mt-0.5 text-zinc-400">Single uses one set, Multiple uses selected sets, All appears no matter what is active.</p>
+                                <p class="font-black text-zinc-100">4. Task rotation choice</p>
+                                <p class="mt-0.5 text-zinc-400">Single uses one rotation, Multiple uses selected rotations, All appears no matter what is active.</p>
                             </div>
                         </div>
                     </details>
 
                     <div v-if="adminTab === 'statistics' && statistics" class="space-y-6">
-                        <div class="flex flex-wrap gap-2">
-                            <button v-for="days in [7,30,90]" :key="days" class="small-button" @click="statsPreset(days)">{{ days }} days</button>
-                            <form class="flex flex-wrap gap-2" @submit.prevent="customStats">
-                                <label class="field relative !w-auto flex min-w-40 items-center justify-between gap-3 focus-within:border-[#ED4264]">
-                                    <span>{{ displayDateInput(statistics.from) }}</span>
-                                    <svg aria-hidden="true" class="h-4 w-4 shrink-0 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M16 3v4M8 3v4M3 10h18"></path></svg>
-                                    <input name="stats_from" type="date" required class="absolute inset-0 h-full w-full cursor-pointer opacity-0" :value="statistics.from" aria-label="Statistics start date">
-                                </label>
-                                <label class="field relative !w-auto flex min-w-40 items-center justify-between gap-3 focus-within:border-[#ED4264]">
-                                    <span>{{ displayDateInput(statistics.to) }}</span>
-                                    <svg aria-hidden="true" class="h-4 w-4 shrink-0 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M16 3v4M8 3v4M3 10h18"></path></svg>
-                                    <input name="stats_to" type="date" required class="absolute inset-0 h-full w-full cursor-pointer opacity-0" :value="statistics.to" aria-label="Statistics end date">
-                                </label>
-                                <button class="small-button">Filter</button>
+                        <section class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-4 sm:p-5">
+                            <div class="flex flex-wrap items-start justify-between gap-4">
+                                <div><h2 class="font-black">Date range</h2><p class="mt-1 text-xs text-zinc-500">Choose a quick period or set a custom inclusive range.</p></div>
+                                <div class="flex flex-wrap gap-2">
+                                    <button v-for="days in [7,30,90]" :key="days" type="button" class="small-button" :class="statsFrom === dateOffset(today, -(days - 1)) && statsTo === today ? 'border-rose-400 bg-rose-400/10 text-rose-200' : ''" @click="statsPreset(days)">{{ days }} days</button>
+                                </div>
+                            </div>
+                            <form class="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]" @submit.prevent="customStats">
+                                <SundayFirstDatePicker v-model="statsFrom" label="From" :max="statsTo || today" :theme="theme" />
+                                <SundayFirstDatePicker v-model="statsTo" label="To" :min="statsFrom" :max="today" :theme="theme" />
+                                <button class="small-button self-end" :disabled="!statsFrom || !statsTo || statsFrom > statsTo">Filter</button>
                             </form>
-                        </div>
+                        </section>
                         <p class="text-xs text-zinc-500">Accurate statistics are tracked from {{ displayAdminDate(statistics.trackingStart) }}.</p>
                         <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                            <div v-for="card in [
-                                ['Completed', statistics.overview.completed], ['Missed', statistics.overview.missed], ['Completion rate', statistics.overview.completionRate + '%'], ['MC days', statistics.overview.mcDays],
-                                ['Planned credits', statistics.overview.plannedCredits.toFixed(2)], ['Completed credits', statistics.overview.completedCredits.toFixed(2)], ['Postponements', statistics.overview.postponements], ['Pending', statistics.overview.pending],
-                            ]" :key="card[0]" class="rounded-2xl border border-zinc-700 bg-zinc-900 p-4"><p class="text-xs font-bold uppercase text-zinc-500">{{ card[0] }}</p><p class="mt-2 text-2xl font-black">{{ card[1] }}</p></div>
+                            <div v-for="card in [['Completed', statistics.overview.completed], ['Missed', statistics.overview.missed], ['Total tasks', statistics.overview.totalTasks], ['Completion rate', statistics.overview.completionRate + '%']]" :key="card[0]" class="rounded-2xl border border-zinc-700 bg-zinc-900 p-4"><p class="text-xs font-bold uppercase text-zinc-500">{{ card[0] }}</p><p class="mt-2 text-2xl font-black">{{ card[1] }}</p></div>
                         </div>
                         <div class="rounded-2xl border border-zinc-700 bg-zinc-900 p-5">
-                            <h2 class="font-black">Daily Trend</h2>
-                            <div class="mt-4 flex items-center gap-4 text-xs font-bold">
-                                <span class="inline-flex items-center gap-2 text-sky-300"><i class="h-2.5 w-2.5 rounded-full bg-sky-400"></i>Completed</span>
-                                <span class="inline-flex items-center gap-2 text-rose-300"><i class="h-2.5 w-2.5 bg-rose-400"></i>Missed</span>
-                            </div>
+                            <div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="font-black">Daily Trend</h2><p class="text-xs text-zinc-500">Latest five working days through today</p></div>
+                            <div class="mt-4 flex items-center gap-4 text-xs font-bold"><span class="inline-flex items-center gap-2 text-sky-300"><i class="h-2.5 w-2.5 rounded-full bg-sky-400"></i>Completed</span><span class="inline-flex items-center gap-2 text-rose-300"><i class="h-2.5 w-2.5 bg-rose-400"></i>Missed</span></div>
                             <div class="mt-4 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-950/5 px-2 py-3">
-                                <div>
-                                    <svg class="block h-auto min-w-[36rem] w-full" viewBox="0 0 560 132" role="img" aria-labelledby="daily-trend-title daily-trend-description">
-                                        <title id="daily-trend-title">Daily trend</title>
-                                        <desc id="daily-trend-description">Lines show completed and missed tasks for each day in the selected period.</desc>
-                                        <g v-for="tick in trendTicks" :key="tick.value">
-                                            <line :x1="trendChart.left" :x2="trendChart.right" :y1="tick.y" :y2="tick.y" stroke="currentColor" stroke-width="0.5" stroke-opacity="0.7" class="text-zinc-700"></line>
-                                            <text x="84" :y="tick.y + 2.5" text-anchor="end" fill="currentColor" class="text-zinc-500" font-size="8">{{ tick.value }}</text>
-                                        </g>
-                                        <line :x1="trendChart.left" :x2="trendChart.right" :y1="trendChart.bottom" :y2="trendChart.bottom" stroke="currentColor" stroke-width="1" class="text-zinc-600"></line>
-                                        <polyline :points="trendLinePoints('completed')" fill="none" stroke="#60a5fa" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></polyline>
-                                        <polyline :points="trendLinePoints('missed')" fill="none" stroke="#fb7185" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></polyline>
-                                        <g v-for="(row, index) in statistics.trend" :key="row.date">
-                                            <circle :cx="trendPointX(index, statistics.trend.length)" :cy="trendPointY(row.completed)" r="1.9" fill="#60a5fa"><title>{{ `${displayAdminDate(row.date)}: ${row.completed} completed` }}</title></circle>
-                                            <rect :x="trendPointX(index, statistics.trend.length) - 1.8" :y="trendPointY(row.missed) - 1.8" width="3.6" height="3.6" fill="#fb7185"><title>{{ `${displayAdminDate(row.date)}: ${row.missed} missed` }}</title></rect>
-                                            <template v-if="showTrendLabel(index, statistics.trend.length)">
-                                                <text :x="trendPointX(index, statistics.trend.length)" y="106" text-anchor="middle" fill="currentColor" class="text-zinc-400" font-size="7.5">{{ trendDate(row.date) }}</text>
-                                                <text :x="trendPointX(index, statistics.trend.length)" y="119" text-anchor="middle" fill="currentColor" class="text-zinc-600" font-size="6.2">{{ trendWeekday(row.date) }}</text>
-                                            </template>
-                                        </g>
-                                    </svg>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="grid gap-4 lg:grid-cols-2">
-                            <div class="rounded-2xl border border-zinc-700 bg-zinc-900 p-5">
-                                <h2 class="font-black">By Session</h2>
-                                <div class="mt-3 space-y-3">
-                                    <div v-for="row in statistics.sessions" :key="row.id" class="rounded-xl border border-zinc-700 p-3">
-                                        <div class="flex justify-between text-sm font-bold"><span>{{ row.name }}</span><span>{{ row.completedCredits }} / {{ row.plannedCredits }} hrs</span></div>
-                                        <p class="mt-1 text-xs text-zinc-500">{{ row.completed }} completed - {{ row.missed }} missed</p>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="rounded-2xl border border-zinc-700 bg-zinc-900 p-5">
-                                <h2 class="font-black">Weekly Status</h2>
-                                <div class="mt-4 grid grid-cols-3 gap-3 text-center">
-                                    <div v-for="item in [['Completed',statistics.weeklyStatus.completed],['Pending',statistics.weeklyStatus.pending],['Missed',statistics.weeklyStatus.missed]]" :key="item[0]" class="rounded-xl border border-zinc-700 p-4"><p class="text-2xl font-black">{{ item[1] }}</p><p class="mt-1 text-[10px] uppercase text-zinc-500">{{ item[0] }}</p></div>
-                                </div>
+                                <svg class="block h-auto min-w-[35rem] w-full" viewBox="0 0 560 132" role="img" aria-labelledby="daily-trend-title daily-trend-description">
+                                    <title id="daily-trend-title">Daily trend</title><desc id="daily-trend-description">Completed and missed tasks for the latest five working days.</desc>
+                                    <g v-for="tick in trendTicks" :key="tick.value"><line :x1="trendChart.left" :x2="trendChart.right" :y1="tick.y" :y2="tick.y" stroke="currentColor" stroke-width="0.5" stroke-opacity="0.7" class="text-zinc-700"></line><text x="42" :y="tick.y + 2.5" text-anchor="end" fill="currentColor" class="text-zinc-500" font-size="8">{{ tick.value }}</text></g>
+                                    <line :x1="trendChart.left" :x2="trendChart.right" :y1="trendChart.bottom" :y2="trendChart.bottom" stroke="currentColor" stroke-width="1" class="text-zinc-600"></line>
+                                    <polyline :points="trendLinePoints('completed')" fill="none" stroke="#60a5fa" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></polyline><polyline :points="trendLinePoints('missed')" fill="none" stroke="#fb7185" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></polyline>
+                                    <g v-for="(row, index) in statistics.trend" :key="row.date"><circle :cx="trendPointX(index, statistics.trend.length)" :cy="trendPointY(row.completed)" r="1.9" fill="#60a5fa"><title>{{ `${displayAdminDate(row.date)}: ${row.completed} completed` }}</title></circle><rect :x="trendPointX(index, statistics.trend.length) - 1.8" :y="trendPointY(row.missed) - 1.8" width="3.6" height="3.6" fill="#fb7185"><title>{{ `${displayAdminDate(row.date)}: ${row.missed} missed` }}</title></rect><text :x="trendPointX(index, statistics.trend.length)" y="106" text-anchor="middle" fill="currentColor" class="text-zinc-400" font-size="7.5">{{ trendDate(row.date) }}</text><text :x="trendPointX(index, statistics.trend.length)" y="119" text-anchor="middle" fill="currentColor" class="text-zinc-600" font-size="6.2">{{ trendWeekday(row.date) }}</text></g>
+                                </svg>
                             </div>
                         </div>
                     </div>
 
                     <div v-else-if="adminTab === 'history'" class="space-y-6">
-                        <div class="flex flex-wrap items-center gap-3 rounded-2xl border border-zinc-700 bg-zinc-900/50 p-3">
-                            <button class="h-10 w-10 rounded-xl border border-zinc-700" aria-label="Previous day" @click="openAdmin(dateOffset(adminDate, -1))">&lt;</button>
-                            <label class="field relative !w-auto flex min-w-40 items-center justify-between gap-3 focus-within:border-[#ED4264]">
-                                <span>{{ displayDateInput(adminDate) }}</span>
-                                <svg aria-hidden="true" class="h-4 w-4 shrink-0 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M16 3v4M8 3v4M3 10h18"></path></svg>
-                                <input type="date" class="absolute inset-0 h-full w-full cursor-pointer opacity-0" :value="adminDate" aria-label="Choose history date" @change="chooseAdminDate">
-                            </label>
-                            <button class="h-10 w-10 rounded-xl border border-zinc-700" aria-label="Next day" @click="openAdmin(dateOffset(adminDate, 1))">&gt;</button>
-                            <button v-if="!adminIsToday" class="small-button" @click="openAdmin()">Back to today</button>
-                            <span class="text-sm font-black text-zinc-300">{{ displayAdminDate(adminDate) }}</span>
+                        <div class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-4 sm:p-5">
+                            <div class="flex flex-wrap items-end justify-between gap-4">
+                                <div class="flex items-end gap-2"><button class="history-nav-button" aria-label="Previous day" @click="openAdmin(dateOffset(adminDate, -1))"><svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="m12.5 4.5-5.5 5.5 5.5 5.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button><SundayFirstDatePicker :model-value="adminDate" label="History date" :theme="theme" @update:model-value="chooseAdminDate" /><button class="history-nav-button" aria-label="Next day" @click="openAdmin(dateOffset(adminDate, 1))"><svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="m7.5 4.5 5.5 5.5-5.5 5.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></div>
+                                <div class="flex flex-wrap items-center gap-3"><button v-if="!adminIsToday" class="small-button" @click="openAdmin()">Back to today</button><div class="history-selected-date"><span>Viewing</span><strong>{{ displayAdminDate(adminDate) }}</strong></div></div>
+                            </div>
                         </div>
                         <section v-for="(session, index) in sessions" :key="session.id" v-show="historyFor(session.id).length">
                             <header class="mb-3 flex items-center justify-between gap-3"><h2 class="font-black uppercase" :class="sessionTone(index)">{{ session.name }}</h2><span class="shrink-0 text-xs text-zinc-500">{{ sessionCreditsByType(historyFor(session.id), 'daily') }} ch/day <span aria-hidden="true">-</span> {{ sessionCreditsByType(historyFor(session.id), 'weekly') }} ch/week</span></header>
                             <div class="grid items-start gap-2 md:grid-cols-2">
                                 <article v-for="entry in historyFor(session.id)" :key="entry.key" class="rounded-xl border bg-zinc-900 p-4 transition duration-150" :class="entry.evidence?.length ? 'border-zinc-700 hover:-translate-y-0.5 hover:border-sky-400/70 hover:bg-sky-400/5 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-sky-400' : 'border-zinc-700 opacity-75'">
                                     <button class="w-full text-left disabled:cursor-default" :class="entry.evidence?.length ? 'cursor-pointer' : ''" :disabled="!entry.evidence?.length" @click="viewingEvidence = entry">
-                                    <div class="flex items-start justify-between gap-3"><strong class="min-w-0 flex-1 text-sm">{{ entry.text }}</strong><span class="shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[9px] font-black uppercase" :class="entry.status === 'completed' ? 'bg-emerald-500/10 text-emerald-300' : entry.status === 'missed' ? 'bg-rose-500/10 text-rose-300' : 'bg-zinc-800 text-zinc-400'">{{ entry.status === 'completed' ? 'Completed' : entry.status === 'missed' ? 'Missed' : 'Pending' }}</span></div>
+                                    <div class="flex items-start justify-between gap-3"><strong class="min-w-0 flex-1 text-sm">{{ entry.text }}</strong><span class="shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-xs font-black uppercase" :class="entry.status === 'completed' ? 'bg-emerald-500/10 text-emerald-300' : entry.status === 'missed' ? 'bg-rose-500/10 text-rose-300' : 'bg-zinc-800 text-zinc-400'">{{ entry.status === 'completed' ? 'Completed' : entry.status === 'missed' ? 'Missed' : 'Pending' }}</span></div>
                                     <p class="mt-2 text-xs text-zinc-500">{{ entry.creditHours }} hrs<span v-if="entry.type === 'weekly'"> - Weekly, due {{ displayAdminDate(entry.originalDueDate) }}</span></p>
                                     <p v-if="entry.isCompleted" class="mt-1 text-xs text-zinc-500">{{ formatTimestamp(entry.completedAt) }} - {{ entry.evidence.length }} photo{{ entry.evidence.length === 1 ? '' : 's' }}</p>
                                     <p v-if="entry.completionNote" class="mt-2 text-xs text-zinc-300">Note: {{ entry.completionNote }}</p>
@@ -1323,174 +1372,54 @@ function chooseAdminDate(event) {
                     </div>
 
                     <div v-else-if="adminTab === 'audit'" class="space-y-4">
-                        <div class="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5"><h2 class="font-black">Task reopen audit log</h2><p class="mt-1 text-sm text-zinc-400">Reopened tasks keep their previous proof privately, together with the required admin reason.</p></div>
-                        <p v-if="!reopenAudits.length" class="rounded-2xl border border-dashed border-zinc-700 p-10 text-center text-sm text-zinc-500">No tasks have been reopened.</p>
-                        <article v-for="audit in reopenAudits" :key="audit.id" class="rounded-2xl border border-zinc-700 bg-zinc-900 p-4"><div class="flex flex-wrap items-start justify-between gap-3"><div><h3 class="font-black">{{ audit.taskText }}</h3><p class="mt-1 text-xs text-zinc-500">{{ audit.taskType }} - {{ audit.sessionName }} - task date {{ displayAdminDate(audit.taskDate) }}</p></div><span class="rounded-full bg-amber-500/15 px-2 py-1 text-[10px] font-black uppercase text-amber-300">Reopened</span></div><p class="mt-3 text-sm text-zinc-200">Reason: {{ audit.reason }}</p><p v-if="audit.completionNote" class="mt-2 text-sm text-zinc-400">Original note: {{ audit.completionNote }}</p><p class="mt-3 text-xs text-zinc-500">{{ audit.evidenceCount }} proof photo{{ audit.evidenceCount === 1 ? '' : 's' }} invalidated - {{ audit.performedBy }} - {{ formatTimestamp(audit.occurredAt) }}</p></article>
+                        <div class="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5"><h2 class="font-black">Activity audit log</h2><p class="mt-1 text-sm text-zinc-400">Authentication, task, rotation, work-session, availability, and ordering changes are retained here. Sensitive credentials and file paths are never recorded.</p></div>
+                        <p v-if="!auditLogs.length" class="rounded-2xl border border-dashed border-zinc-700 p-10 text-center text-sm text-zinc-500">No audit activity has been recorded yet.</p>
+                        <article v-for="audit in auditLogs" :key="audit.id" class="rounded-2xl border border-zinc-700 bg-zinc-900 p-4"><div class="flex flex-wrap items-start justify-between gap-3"><div><h3 class="font-black">{{ auditActionLabel(audit.action) }}</h3><p v-if="auditDetails(audit)" class="mt-1 text-sm text-zinc-300">{{ auditDetails(audit) }}</p></div><span class="rounded-full px-2 py-1 text-xs font-black uppercase" :class="auditActorTone(audit.actorType)">{{ audit.actorType }}</span></div><p class="mt-3 text-xs text-zinc-500">{{ audit.actorLabel }} - {{ formatTimestamp(audit.occurredAt) }}</p></article>
+                        <nav v-if="auditLinks.length > 3" class="flex flex-wrap gap-2" aria-label="Audit log pages"><button v-for="link in auditLinks" :key="link.label" type="button" class="small-button" :class="link.active ? 'border-rose-400 bg-rose-400/10 text-rose-200' : ''" :disabled="!link.url" @click="openAuditPage(link.url)">{{ auditLinkLabel(link.label) }}</button></nav>
                     </div>
 
                     <div v-else-if="adminTab === 'collections'" class="grid gap-6 lg:grid-cols-[320px_1fr]">
-                        <div class="space-y-5">
-                            <div class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-4">
-                                <p class="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Step 1</p>
-                                <p class="mt-1 text-xs leading-relaxed text-zinc-400">Create custom collections here, then assign them on the calendar. Past dates before {{ displayAdminDate(today) }} stay locked.</p>
-                                <form class="mt-3 space-y-2" @submit.prevent="createCollection">
-                                    <input v-model.trim="collectionForm.name" required maxlength="100" class="field !py-2 text-sm" placeholder="Collection name">
-                                    <button class="primary-button !py-2 text-sm">Add collection</button>
-                                </form>
-                                <article v-if="defaultCollection" class="mt-3 flex items-center justify-between gap-3 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2">
-                                    <div class="min-w-0">
-                                        <p class="truncate text-sm font-semibold text-zinc-200">{{ collectionDisplayName(defaultCollection) }}</p>
-                                        <p class="text-[11px] text-zinc-500">Applies every day</p>
-                                    </div>
-                                    <span class="rounded-full border border-zinc-700 px-2 py-0.5 text-[10px] font-black uppercase text-zinc-400">System</span>
-                                </article>
-                                <p v-if="!manageableCollections.length" class="mt-3 rounded-xl border border-dashed border-zinc-700 p-3 text-xs text-zinc-500">No custom collections yet.</p>
-                                <div v-if="manageableCollections.length" class="mt-3 space-y-1.5">
-                                    <article v-for="collection in manageableCollections" :key="`manage-${collection.id}`" class="flex items-center justify-between gap-3 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2">
-                                        <div class="min-w-0">
-                                            <p class="truncate text-sm font-semibold text-zinc-200">{{ collectionDisplayName(collection) }}</p>
-                                        </div>
-                                        <button class="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-bold text-rose-300 transition hover:border-rose-400/60 hover:bg-rose-400/10" @click="deleteCollection(collection)">Delete</button>
-                                    </article>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="space-y-5">
-                            <div class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-4">
-                                <div class="flex flex-wrap items-start justify-between gap-2">
-                                    <div>
-                                        <p class="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Step 2</p>
-                                        <p class="mt-1 max-w-xl text-xs text-zinc-400">Drag dates to create a range, or click a colored range to select it. Today is {{ displayAdminDate(today) }}.</p>
-                                    </div>
-                                    <div class="flex items-center gap-2">
-                                        <button
-                                            type="button"
-                                            class="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-200 transition hover:border-zinc-500 hover:text-white"
-                                            aria-label="Previous month"
-                                            @click="prevCollectionCalendarMonth"
-                                        >
-                                            <svg aria-hidden="true" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-                                                <path d="M12.5 4.5 7 10l5.5 5.5" stroke-linecap="round" stroke-linejoin="round"></path>
-                                            </svg>
-                                        </button>
-                                        <span class="min-w-32 text-center text-xs font-black text-zinc-200">{{ collectionCalendarMonthLabel(collectionCalendarMonth) }}</span>
-                                        <button
-                                            type="button"
-                                            class="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-200 transition hover:border-zinc-500 hover:text-white"
-                                            aria-label="Next month"
-                                            @click="nextCollectionCalendarMonth"
-                                        >
-                                            <svg aria-hidden="true" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-                                                <path d="M7.5 4.5 13 10l-5.5 5.5" stroke-linecap="round" stroke-linejoin="round"></path>
-                                            </svg>
-                                        </button>
-                                        <button
-                                            type="button"
-                                            class="inline-flex h-10 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-xs font-black text-zinc-200 transition hover:border-zinc-500 hover:text-white"
-                                            @click="goToCollectionCalendarToday"
-                                        >
-                                            Today
-                                        </button>
-                                    </div>
-                                </div>
-                                <div class="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto]">
-                                    <label class="space-y-1 text-xs font-bold text-zinc-400">
-                                        <span>Assign collection to dates</span>
-                                        <select v-model="collectionScheduleForm.task_collection_id" class="field !h-10 !py-2 text-sm" :disabled="!manageableCollections.length">
-                                            <option v-for="collection in manageableCollections" :key="collection.id" :value="collection.id">{{ collectionDisplayName(collection) }}</option>
-                                        </select>
-                                    </label>
-                                    <button type="button" class="inline-flex h-10 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-4 text-sm font-black text-zinc-100 transition hover:border-zinc-500 hover:text-white self-end" @click="clearCalendarSelection">Clear dates</button>
-                                    <button type="button" class="inline-flex h-10 items-center justify-center rounded-lg bg-gradient-to-r from-[#ED4264] to-[#FFEDBC] px-4 text-sm font-black text-zinc-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60 self-end" :disabled="!manageableCollections.length || selectedCollectionSchedule" @click="assignCalendarSelection">Save range</button>
-                                </div>
-                                <div class="mt-2 flex flex-wrap items-start justify-between gap-3">
-                                    <p class="text-xs text-zinc-500">
-                                        <template v-if="selectedCollectionCalendarRange">
-                                            Selected range: {{ displayAdminDate(selectedCollectionCalendarRange.starts_on) }} - {{ displayAdminDate(selectedCollectionCalendarRange.ends_on) }}
-                                            <template v-if="selectedCollectionSchedule">
-                                                - {{ collectionDisplayNameById(selectedCollectionSchedule.collectionId, selectedCollectionSchedule.collectionName) }}
-                                            </template>
-                                        </template>
-                                        <template v-else>
-                                            No dates selected.
-                                        </template>
-                                    </p>
-                                    <button
-                                        v-if="selectedCollectionSchedule"
-                                        type="button"
-                                        class="inline-flex items-center rounded-xl border border-rose-400/40 bg-rose-400/10 px-3 py-2 text-xs font-black text-rose-300 transition hover:border-rose-300/60 hover:bg-rose-400/20 hover:text-rose-200"
-                                        @click="deleteCollectionSchedule(selectedCollectionSchedule)"
-                                    >
-                                        Remove selected range
-                                    </button>
-                                </div>
-                                <p class="mt-1.5 text-xs text-zinc-500">
-                                    <template v-if="selectedCollectionSchedule">Remove this range first if you want to replace it with another collection.</template>
-                                    <template v-else>After selecting empty dates, choose a collection and save the range.</template>
-                                </p>
-                                <p class="hidden mt-3 text-xs text-zinc-500" aria-hidden="true">
-                                    <template v-if="selectedCollectionCalendarRange">
-                                        Selected range: {{ displayAdminDate(selectedCollectionCalendarRange.starts_on) }} - {{ displayAdminDate(selectedCollectionCalendarRange.ends_on) }}
-                                    </template>
-                                    <template v-else>
-                                        No calendar range selected yet.
-                                    </template>
-                                </p>
-                                <div class="mt-3 grid max-w-3xl grid-cols-7 gap-1 text-center text-[9px] font-black uppercase tracking-[0.12em] text-zinc-500">
-                                    <span v-for="day in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']" :key="day">{{ day }}</span>
-                                </div>
-                                <div class="mt-1.5 grid max-w-3xl grid-cols-7 gap-1">
-                                    <article v-for="day in collectionCalendarDays" :key="day.date" class="min-h-[58px] rounded-md border p-1 transition select-none cursor-pointer" :class="[day.collection ? collectionDayTone(day.collection?.id) : (day.inMonth ? 'border-zinc-700 bg-zinc-900' : 'border-zinc-800 bg-zinc-950/60 opacity-55'), !day.collection && (day.schedule ? 'hover:border-rose-400/50' : 'hover:border-zinc-600'), !day.inMonth ? 'opacity-55' : '', isCalendarDateSelected(day.date) ? 'border-sky-400/70 bg-sky-400/10 ring-2 ring-sky-400/60' : '']" :title="day.schedule ? `Click to select the ${collectionDisplayName(day.collection) || 'scheduled'} range` : 'Click or drag to select a range'" @mousedown.prevent="startCalendarSelection(day)" @mouseenter="extendCalendarSelection(day)" @mouseup="finishCalendarSelection(day)">
-                                        <div class="flex items-start justify-between gap-2">
-                                            <span class="text-[11px] font-black" :class="day.isToday ? 'text-amber-300' : day.inMonth ? 'text-zinc-100' : 'text-zinc-500'">{{ day.dayNumber }}</span>
-                                            <span v-if="day.isToday" class="rounded-full border border-amber-400/40 px-1 py-0.5 text-[7px] font-black uppercase text-amber-300">Today</span>
-                                        </div>
-                                        <div v-if="day.collection?.name && shouldShowCollectionCalendarPill(day)" class="mt-1.5">
-                                            <span class="inline-flex rounded-full border px-1 py-0.5 text-[8px] font-black leading-tight" :class="collectionTone(day.collection?.id)">
-                                                {{ shortCollectionName(collectionDisplayName(day.collection)) }}
-                                            </span>
-                                        </div>
-                                    </article>
-                                </div>
-                            </div>
-                            <div v-if="false" class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5">
-                                <h2 class="font-black">Date Ranges</h2>
-                                <p v-if="!collectionSchedules.length" class="mt-3 rounded-xl border border-dashed border-zinc-700 p-6 text-center text-sm text-zinc-500">No collection ranges yet. The default collection is used until you schedule another range.</p>
-                                <div v-else class="mt-3 space-y-2">
-                                    <article v-for="schedule in collectionSchedules" :key="schedule.id" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-3">
-                                        <div><p class="text-sm font-semibold">{{ collectionDisplayNameById(schedule.collectionId, schedule.collectionName) }}</p><p class="text-xs text-zinc-500">{{ displayAdminDate(schedule.startsOn) }} - {{ displayAdminDate(schedule.endsOn) }}</p></div>
-                                        <button class="small-button text-rose-300" @click="deleteCollectionSchedule(schedule)">Remove</button>
-                                    </article>
-                                </div>
-                            </div>
-                        </div>
+                        <aside class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5"><p class="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Rotations</p><p class="mt-1 text-xs leading-relaxed text-zinc-400">Each custom rotation owns one Sunday–Saturday week. Rotations repeat in the order they are added.</p><form class="mt-5 space-y-2" @submit.prevent="createCollection"><label class="form-label" for="collection-name">Rotation name</label><input id="collection-name" v-model.trim="collectionForm.name" required maxlength="100" class="field !py-2 text-sm" placeholder="For example, Heavy Duty" v-bind="validationAttrs('collection', 'name')"><p v-if="errorFor('collection', 'name')" :id="errorId('collection', 'name')" class="field-error">{{ errorFor('collection', 'name') }}</p><button class="primary-button !py-2 text-sm">Add rotation</button></form><article v-if="defaultCollection" class="mt-5 flex items-center justify-between gap-3 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2"><div class="min-w-0"><p class="truncate text-sm font-semibold text-zinc-200">{{ collectionDisplayName(defaultCollection) }}</p><p class="text-xs text-zinc-500">Fallback on working days</p></div><span class="rounded-full border border-zinc-700 px-2 py-0.5 text-xs font-black uppercase text-zinc-400">System</span></article><p v-if="!manageableCollections.length" class="mt-4 rounded-xl border border-dashed border-zinc-700 p-3 text-xs text-zinc-500">No custom rotations yet. The fallback rotation is active on weekdays.</p><div v-else class="mt-4 space-y-2"><article v-for="(collection, index) in manageableCollections" :key="`manage-${collection.id}`" class="flex items-center justify-between gap-3 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2"><div class="min-w-0"><p class="truncate text-sm font-semibold text-zinc-200">Week {{ index + 1 }}: {{ collectionDisplayName(collection) }}</p></div><button class="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-bold text-rose-300 transition hover:border-rose-400/60 hover:bg-rose-400/10" @click="deleteCollection(collection)">Delete</button></article></div></aside>
+                        <section class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-4 sm:p-5"><div class="flex flex-wrap items-start justify-between gap-3"><div><p class="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Rotation calendar</p><p class="mt-1 text-xs text-zinc-400">The calendar starts Sunday and shows the active rotation for every week.</p></div><div class="flex items-center gap-2"><button type="button" class="calendar-nav-button" aria-label="Previous month" @click="prevCollectionCalendarMonth"><svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="m12.5 4.5-5.5 5.5 5.5 5.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button><span class="min-w-32 text-center text-xs font-black text-zinc-200">{{ collectionCalendarMonthLabel(collectionCalendarMonth) }}</span><button type="button" class="calendar-nav-button" aria-label="Next month" @click="nextCollectionCalendarMonth"><svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="m7.5 4.5 5.5 5.5-5.5 5.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button><button type="button" class="small-button" @click="goToCollectionCalendarToday">Today</button></div></div><div class="mt-5 grid grid-cols-7 gap-1 text-center text-xs font-black uppercase tracking-[0.12em] text-zinc-500"><span v-for="day in ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']" :key="day">{{ day }}</span></div><div class="mt-1.5 grid grid-cols-7 gap-1"><div v-for="day in collectionCalendarDays" :key="day.date" class="min-h-[64px] rounded-md border p-1.5" :class="[collectionCalendarDayTone(day), !day.inMonth ? 'opacity-55' : '']"><div class="flex items-start justify-between gap-2"><span class="text-xs font-black" :class="day.isToday ? 'text-amber-300' : day.inMonth ? 'text-zinc-100' : 'text-zinc-500'">{{ day.dayNumber }}</span><span v-if="day.isToday" class="text-[9px] font-black uppercase text-amber-300">Today</span></div><div v-if="shouldShowCollectionCalendarPill(day)" class="mt-1"><span class="inline-flex rounded-full border px-1.5 py-0.5 text-[9px] font-black leading-tight" :class="collectionCalendarPillTone(day)">Week {{ day.rotationWeek ?? '–' }}: {{ shortCollectionName(collectionDisplayName(day.rotation)) }}</span></div></div></div></section>
                     </div>
 
                     <div v-else-if="adminTab === 'sessions'" class="grid gap-6 lg:grid-cols-[360px_1fr]">
                         <div class="space-y-5">
-                            <form class="space-y-3 rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5" @submit.prevent="createSession"><h2 class="font-black">Add Work Session</h2><input v-model.trim="sessionForm.name" required maxlength="100" class="field" placeholder="Session name"><button class="primary-button">Add work session</button></form>
-                            <div class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5"><h2 class="font-black">Expected Weekly Load</h2><div class="mt-3 space-y-2"><div v-for="row in workload" :key="row.sessionId" class="rounded-xl border p-3" :class="row.isOverloaded ? 'border-amber-500/40 bg-amber-500/10' : 'border-zinc-700'"><div class="flex justify-between text-sm font-bold"><span>{{ row.sessionName }}</span><span>{{ row.expectedWeeklyCredits }} hrs</span></div><p class="mt-1 text-[10px] text-zinc-500">7 x {{ row.dailyCredits }} daily + {{ row.weeklyCredits }} weekly<span v-if="row.isOverloaded" class="text-amber-300"> - more than 20% above average</span></p></div></div></div>
+                            <form class="space-y-3 rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5" @submit.prevent="createSession">
+                                <h2 class="font-black">Add Work Session</h2>
+                                <label class="form-label" for="session-name">Session name</label>
+                                <input id="session-name" v-model.trim="sessionForm.name" required maxlength="100" class="field" placeholder="For example, 4:00 PM - 6:00 PM" v-bind="validationAttrs('session', 'name')">
+                                <p v-if="errorFor('session', 'name')" :id="errorId('session', 'name')" class="field-error">{{ errorFor('session', 'name') }}</p>
+                                <button class="primary-button">Add work session</button>
+                            </form>
+                            <div class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5"><h2 class="font-black">Expected Weekly Load</h2><div class="mt-3 space-y-2"><div v-for="row in workload" :key="row.sessionId" class="rounded-xl border p-3" :class="row.isOverloaded ? 'border-amber-500/40 bg-amber-500/10' : 'border-zinc-700'"><div class="flex justify-between text-sm font-bold"><span>{{ row.sessionName }}</span><span>{{ row.expectedWeeklyCredits }} hrs</span></div><p class="mt-1 text-xs text-zinc-500">5 x {{ row.dailyCredits }} daily + {{ row.weeklyCredits }} weekly<span v-if="row.isOverloaded" class="text-amber-300"> - more than 20% above average</span></p></div></div></div>
                         </div>
-                        <div class="space-y-2">
-                            <article v-for="(session, index) in activeSessions" :key="session.id" class="flex items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-4"><span class="w-7 text-center font-black text-zinc-500">{{ index + 1 }}</span><strong class="min-w-0 flex-1">{{ session.name }}</strong><button class="small-button" :disabled="index === 0" @click="moveSession(index, -1)">^</button><button class="small-button" :disabled="index === activeSessions.length - 1" @click="moveSession(index, 1)">v</button><button class="small-button" @click="editSession(session)">Edit</button><button class="small-button text-rose-300" @click="archiveSession(session)">Archive</button></article>
+                        <div class="space-y-2" data-sortable-work-sessions>
+                            <article v-for="(session, index) in activeSessions" :key="session.id" :data-session-id="session.id" class="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-4"><button type="button" class="session-drag-handle inline-flex h-8 w-5 cursor-grab items-center justify-center text-zinc-500" aria-label="Drag to reorder work sessions"><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5"><circle cx="8" cy="5" r="1.7"></circle><circle cx="16" cy="5" r="1.7"></circle><circle cx="8" cy="12" r="1.7"></circle><circle cx="16" cy="12" r="1.7"></circle><circle cx="8" cy="19" r="1.7"></circle><circle cx="16" cy="19" r="1.7"></circle></svg></button><span class="w-7 text-center font-black text-zinc-500">{{ index + 1 }}</span><strong class="min-w-0 flex-1">{{ session.name }}</strong><button class="small-button inline-flex h-9 w-9 items-center justify-center p-0" aria-label="Edit work session" title="Edit work session" @click="editSession(session)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m4 16.5-.7 4.2 4.2-.7L18.8 8.7l-3.5-3.5L4 16.5Z" stroke-linejoin="round"></path><path d="m13.8 6.7 3.5 3.5" stroke-linecap="round"></path></svg></button><button class="small-button text-rose-300" @click="archiveSession(session)">Archive</button></article>
                         </div>
                     </div>
 
                     <div v-else-if="adminTab === 'tasks'" class="grid gap-6 lg:grid-cols-[360px_1fr]">
                         <form class="space-y-3 rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5" @submit.prevent="createTask">
                             <h2 class="font-black">Add New Task</h2>
-                            <input v-model.trim="taskForm.task_name" required maxlength="255" class="field" placeholder="Task name">
-                            <select v-model="taskForm.task_type" class="field"><option value="daily">Daily</option><option value="weekly">Weekly</option></select>
-                            <select v-model="taskForm.task_session_id" required class="field"><option v-for="session in activeSessions" :key="session.id" :value="session.id">{{ session.name }}</option></select>
-                            <select v-if="taskForm.task_type === 'weekly'" v-model.number="taskForm.due_weekday" class="field"><option v-for="day in 7" :key="day" :value="day">{{ weekdayName(day) }}</option></select>
-                            <input v-model.number="taskForm.credit_hours" required type="number" min="0.25" max="24" step="0.25" class="field" placeholder="Credit hours">
-                            <select v-model="taskForm.collection_mode" class="field"><option value="single">Single collection</option><option value="multiple">Multiple collections</option><option value="all">All collections</option></select>
-                            <select v-if="taskForm.collection_mode === 'single'" v-model="taskForm.single_collection_id" required class="field"><option v-for="collection in taskCollections" :key="collection.id" :value="collection.id">{{ collectionDisplayName(collection) }}</option></select>
+                            <label class="form-label" for="task-name">Task name</label>
+                            <input id="task-name" v-model.trim="taskForm.task_name" required maxlength="255" class="field" placeholder="For example, Mop the lobby" v-bind="validationAttrs('task', 'task_name')">
+                            <p v-if="errorFor('task', 'task_name')" :id="errorId('task', 'task_name')" class="field-error">{{ errorFor('task', 'task_name') }}</p>
+                            <label class="form-label">Task type<select v-model="taskForm.task_type" class="field" v-bind="validationAttrs('task', 'task_type')"><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+                            <label class="form-label">Work session<select v-model="taskForm.task_session_id" required class="field" v-bind="validationAttrs('task', 'task_session_id')"><option v-for="session in activeSessions" :key="session.id" :value="session.id">{{ session.name }}</option></select></label>
+                            <p v-if="errorFor('task', 'task_session_id')" :id="errorId('task', 'task_session_id')" class="field-error">{{ errorFor('task', 'task_session_id') }}</p>
+                            <label v-if="taskForm.task_type === 'weekly'" class="form-label">Weekly due day<select v-model.number="taskForm.due_weekday" class="field" v-bind="validationAttrs('task', 'due_weekday')"><option v-for="day in 5" :key="day" :value="day">{{ weekdayName(day) }}</option></select></label>
+                            <p v-if="errorFor('task', 'due_weekday')" :id="errorId('task', 'due_weekday')" class="field-error">{{ errorFor('task', 'due_weekday') }}</p>
+                            <label class="form-label">Credit hours<input v-model.number="taskForm.credit_hours" required type="number" min="0.25" max="24" step="0.25" class="field" placeholder="For example, 1.5" v-bind="validationAttrs('task', 'credit_hours')"></label>
+                            <p v-if="errorFor('task', 'credit_hours')" :id="errorId('task', 'credit_hours')" class="field-error">{{ errorFor('task', 'credit_hours') }}</p>
+                            <label class="form-label">Where this task appears<select v-model="taskForm.collection_mode" class="field"><option value="single">One rotation</option><option value="multiple">Selected rotations</option><option value="all">All rotations</option></select></label>
+                            <label v-if="taskForm.collection_mode === 'single'" class="form-label">Rotation<select v-model="taskForm.single_collection_id" required class="field" v-bind="validationAttrs('task', 'task_collection_ids')"><option v-for="collection in taskCollections" :key="collection.id" :value="collection.id">{{ collectionDisplayName(collection) }}</option></select></label>
                             <div v-else-if="taskForm.collection_mode === 'multiple'" class="rounded-2xl border border-zinc-700 bg-zinc-900 p-3">
-                                <p class="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">Choose collections</p>
+                                <p class="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">Choose rotations</p>
                                 <label v-for="collection in taskCollections" :key="collection.id" class="mt-3 flex items-center gap-3 text-sm text-zinc-300"><input v-model="taskForm.task_collection_ids" type="checkbox" :value="collection.id"><span>{{ collectionDisplayName(collection) }}</span></label>
                             </div>
-                            <p class="text-xs text-zinc-500">Single = one collection. Multiple = selected collections. All = show the task no matter which collection is active.</p>
+                            <p v-if="errorFor('task', 'task_collection_ids')" :id="errorId('task', 'task_collection_ids')" class="field-error">{{ errorFor('task', 'task_collection_ids') }}</p>
+                            <p class="text-xs text-zinc-500">Single = one rotation. Multiple = selected rotations. All = show the task no matter which rotation is active.</p>
                             <button :disabled="busy" class="primary-button">Add task</button>
                         </form>
                         <div class="space-y-6">
@@ -1498,15 +1427,15 @@ function chooseAdminDate(event) {
                                 <div class="flex flex-wrap items-start justify-between gap-3">
                                     <div>
                                         <h2 class="font-black">Find Tasks</h2>
-                                        <p class="mt-1 text-sm text-zinc-400">Check which tasks belong to a collection before editing them. Tasks that apply to all collections still show up in every filtered view.</p>
+                                        <p class="mt-1 text-sm text-zinc-400">Check which rotation a task belongs to before editing it. Tasks that apply to all rotations still show up in every filtered view.</p>
                                     </div>
                                     <button type="button" class="small-button" @click="taskListFilters = { collection_id: 'all', task_type: 'all' }">Reset filters</button>
                                 </div>
                                 <div class="mt-4 grid gap-3 md:grid-cols-2">
                                     <label class="space-y-1 text-xs font-bold text-zinc-400">
-                                        <span>Collection</span>
+                                        <span>Rotation</span>
                                         <select v-model="taskListFilters.collection_id" class="field">
-                                            <option value="all">All collections</option>
+                                            <option value="all">All rotations</option>
                                             <option v-for="collection in taskCollections" :key="collection.id" :value="collection.id">{{ collectionDisplayName(collection) }}</option>
                                         </select>
                                     </label>
@@ -1522,69 +1451,34 @@ function chooseAdminDate(event) {
                             </div>
                             <section v-for="(session, index) in activeSessions" :key="session.id">
                                 <header class="mb-2 flex justify-between"><h3 class="font-black uppercase" :class="sessionTone(index)">{{ session.name }}</h3><span class="text-xs text-zinc-500">{{ filteredTaskEditorItemsFor(session.id).length }} task{{ filteredTaskEditorItemsFor(session.id).length === 1 ? '' : 's' }}</span></header>
-                                <div class="space-y-2"><article v-for="item in filteredTaskEditorItemsFor(session.id)" :key="`${item.type}:${item.id}`" class="flex items-center justify-between gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-3"><div><div class="flex flex-wrap items-center gap-2"><p class="text-sm font-semibold">{{ item.taskName }}</p><span class="rounded-full border border-zinc-700 px-2 py-0.5 text-[10px] font-black uppercase text-zinc-300">{{ taskTypeLabel(item.type) }}</span><span v-for="collection in taskCollectionPills(item)" :key="`${item.type}:${item.id}:${collection.key}`" class="max-w-40 truncate rounded-full border px-2 py-0.5 text-[10px] font-black" :class="collection.collectionId ? collectionTone(collection.collectionId) : 'border-zinc-700 bg-zinc-800 text-zinc-300'">{{ collection.name }}</span></div><p class="text-xs text-zinc-500">{{ item.type === 'weekly' ? `${weekdayName(item.dueWeekday)} - ` : '' }}{{ item.creditHours }} hrs</p></div><div class="flex gap-2"><button class="small-button" @click="openEdit(item.type, item)">Edit</button><button class="small-button text-rose-300" @click="deleteTemplate(item.type, item)">Archive</button></div></article></div>
+                                <div class="space-y-2"><article v-for="item in filteredTaskEditorItemsFor(session.id)" :key="`${item.type}:${item.id}`" class="flex items-center justify-between gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-3"><div><div class="flex flex-wrap items-center gap-2"><p class="text-sm font-semibold">{{ item.taskName }}</p><span class="rounded-full border border-zinc-700 px-2 py-0.5 text-xs font-black uppercase text-zinc-300">{{ taskTypeLabel(item.type) }}</span><span v-for="collection in taskCollectionPills(item)" :key="`${item.type}:${item.id}:${collection.key}`" class="max-w-40 truncate rounded-full border px-2 py-0.5 text-xs font-black" :class="collection.collectionId ? collectionTone(collection.collectionId) : 'border-zinc-700 bg-zinc-800 text-zinc-300'">{{ collection.name }}</span></div><p class="text-xs text-zinc-500">{{ item.type === 'weekly' ? `${weekdayName(item.dueWeekday)} - ` : '' }}{{ item.creditHours }} hrs</p></div><div class="flex gap-2"><button class="small-button" @click="openEdit(item.type, item)">Edit</button><button class="small-button text-rose-300" @click="deleteTemplate(item.type, item)">Archive</button></div></article></div>
                             </section>
                         </div>
                     </div>
 
-                    <div v-else-if="adminTab === 'weekly'" class="grid gap-6 lg:grid-cols-[360px_1fr]">
-                        <form class="space-y-3 rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5" @submit.prevent="createTask">
-                            <h2 class="font-black">Add Task</h2>
-                            <select v-model="taskForm.task_type" class="field"><option value="daily">Daily</option><option value="weekly">Weekly</option></select>
-                            <input v-model.trim="taskForm.task_name" required maxlength="255" class="field" placeholder="Task name">
-                            <select v-model="taskForm.task_session_id" required class="field"><option v-for="session in activeSessions" :key="session.id" :value="session.id">{{ session.name }}</option></select>
-                            <select v-if="taskForm.task_type === 'weekly'" v-model.number="taskForm.due_weekday" class="field"><option v-for="day in 7" :key="day" :value="day">{{ weekdayName(day) }}</option></select>
-                            <input v-model.number="taskForm.credit_hours" required type="number" min="0.25" max="24" step="0.25" class="field" placeholder="Credit hours">
-                            <select v-model="taskForm.collection_mode" class="field"><option value="single">Single collection</option><option value="multiple">Multiple collections</option><option value="all">All collections</option></select>
-                            <select v-if="taskForm.collection_mode === 'single'" v-model="taskForm.single_collection_id" required class="field"><option v-for="collection in taskCollections" :key="collection.id" :value="collection.id">{{ collectionDisplayName(collection) }}</option></select>
-                            <div v-else-if="taskForm.collection_mode === 'multiple'" class="rounded-2xl border border-zinc-700 bg-zinc-900 p-3">
-                                <p class="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">Choose collections</p>
-                                <label v-for="collection in taskCollections" :key="collection.id" class="mt-3 flex items-center gap-3 text-sm text-zinc-300"><input v-model="taskForm.task_collection_ids" type="checkbox" :value="collection.id"><span>{{ collectionDisplayName(collection) }}</span></label>
-                            </div>
-                            <p class="text-xs text-zinc-500">Single = one collection. Multiple = selected collections. All = show the task no matter which collection is active.</p>
-                            <button :disabled="busy" class="primary-button">Add task</button>
-                        </form>
-                        <div class="space-y-6">
-                            <section v-for="(session, index) in activeSessions" :key="session.id">
-                                <header class="mb-2 flex justify-between"><h3 class="font-black uppercase" :class="sessionTone(index)">{{ session.name }}</h3><span class="text-xs text-zinc-500">{{ sessionCredits(templatesFor(session.id, true)) }} hrs/week</span></header>
-                                <div class="space-y-2"><article v-for="item in templatesFor(session.id, true)" :key="item.id" class="flex items-center justify-between gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-3"><div><p class="text-sm font-semibold">{{ item.taskName }}</p><p class="text-xs text-zinc-500">{{ weekdayName(item.dueWeekday) }} - {{ item.creditHours }} hrs</p><p class="mt-1 text-[11px] text-zinc-400">Collection: {{ collectionDisplayNameById(item.collectionId, item.collectionName) }}</p></div><div class="flex gap-2"><button class="small-button" @click="openEdit('weekly', item)">Edit</button><button class="small-button text-rose-300" @click="deleteTemplate('weekly', item)">Archive</button></div></article></div>
-                            </section>
-                        </div>
-                    </div>
-
-                    <div v-else-if="adminTab === 'daily'" class="grid gap-6 lg:grid-cols-[360px_1fr]">
-                        <form class="space-y-3 rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5" @submit.prevent="createDaily">
-                            <h2 class="font-black">Add Daily Task</h2>
-                            <input v-model.trim="dailyForm.task_name" required maxlength="255" class="field" placeholder="Task name">
-                            <select v-model="dailyForm.task_session_id" required class="field"><option v-for="session in activeSessions" :key="session.id" :value="session.id">{{ session.name }}</option></select>
-                            <select v-model="dailyForm.task_collection_id" required class="field"><option v-for="collection in taskCollections" :key="collection.id" :value="collection.id">{{ collectionDisplayName(collection) }}</option></select>
-                            <input v-model.number="dailyForm.credit_hours" required type="number" min="0.25" max="24" step="0.25" class="field" placeholder="Credit hours">
-                            <button :disabled="busy" class="primary-button">Add daily task</button>
-                        </form>
-                        <div class="space-y-6">
-                            <section v-for="(session, index) in activeSessions" :key="session.id">
-                                <header class="mb-2 flex justify-between"><h3 class="font-black uppercase" :class="sessionTone(index)">{{ session.name }}</h3><span class="text-xs text-zinc-500">{{ sessionCredits(templatesFor(session.id)) }} hrs/day</span></header>
-                                <div class="space-y-2"><article v-for="item in templatesFor(session.id)" :key="item.id" class="flex items-center justify-between gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-3"><div><p class="text-sm font-semibold">{{ item.taskName }}</p><p class="text-xs text-zinc-500">{{ item.creditHours }} hrs</p><p class="mt-1 text-[11px] text-zinc-400">Collection: {{ collectionDisplayNameById(item.collectionId, item.collectionName) }}</p></div><div class="flex gap-2"><button class="small-button" @click="openEdit('daily', item)">Edit</button><button class="small-button text-rose-300" @click="deleteTemplate('daily', item)">Archive</button></div></article></div>
-                            </section>
-                        </div>
-                    </div>
                 </section>
             </div>
         </main>
 
         <div v-if="evidenceTask" class="modal-backdrop">
             <form class="modal-card" @submit.prevent="completeTask">
-                <div class="flex justify-between gap-3"><div><h2 class="font-black">Foto Bukti</h2><p class="mt-1 text-sm text-zinc-400">{{ evidenceTask.text }}</p></div><button type="button" class="small-button" @click="closeEvidence">x</button></div>
+                <div class="flex justify-between gap-3"><div><h2 class="font-black">Foto Bukti</h2><p class="mt-1 text-sm text-zinc-400">{{ evidenceTask.text }}</p></div><button type="button" class="small-button" @click="closeEvidence">Tutup</button></div>
                 <div class="mt-5 rounded-2xl border border-dashed border-zinc-600 p-5 text-center">
                     <strong class="block text-sm">Tambah foto bukti</strong>
-                    <span class="mt-2 block text-xs text-zinc-500">JPEG, PNG atau WebP - maksimum {{ uploadLimits.maxFileMb }} MB setiap satu - had pelayan {{ uploadLimits.maxFiles }} fail / {{ uploadLimits.postMax }}</span>
+                    <span class="mt-2 block text-xs text-zinc-500">JPEG, PNG atau WebP. Maksimum {{ uploadLimits.maxFiles }} foto, {{ uploadLimits.maxFileMb }} MB setiap satu, jumlah sehingga {{ uploadLimits.maxRequestMb }} MB.</span>
+                    <ul class="mt-3 space-y-1 text-left text-xs leading-relaxed text-zinc-300">
+                        <li>Ambil gambar yang jelas dan cukup luas untuk mengenal pasti kawasan yang telah dibersihkan.</li>
+                        <li>Pastikan pencahayaan mencukupi dan elakkan wajah atau maklumat peribadi.</li>
+                    </ul>
                     <div class="mt-4 grid grid-cols-2 gap-2">
                         <label class="small-button cursor-pointer">Ambil foto<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" class="sr-only" @change="selectEvidence"></label>
                         <label class="small-button cursor-pointer">Pilih galeri<input type="file" multiple accept="image/jpeg,image/png,image/webp" class="sr-only" @change="selectEvidence"></label>
                     </div>
                 </div>
-                <div v-if="evidencePreviews.length" class="mt-4 grid grid-cols-3 gap-2"><div v-for="(preview, index) in evidencePreviews" :key="preview" class="relative aspect-square overflow-hidden rounded-xl bg-zinc-800"><img :src="preview" alt="Pratonton bukti" class="h-full w-full object-cover"><button type="button" class="absolute right-1 top-1 h-7 w-7 rounded-full bg-black/75 text-xs" @click="removeEvidence(index)">x</button></div></div>
-                <label class="mt-4 block text-sm font-bold">Nota tugasan <span class="font-normal text-zinc-500">(pilihan)</span><textarea v-model.trim="completionNote" maxlength="500" rows="5" class="field mt-2 h-auto pb-3 pt-8" placeholder="Contoh: kawasan ditutup atau bekalan tidak mencukupi"></textarea></label>
+                <p v-if="errorFor('evidence', 'photos')" :id="errorId('evidence', 'photos')" class="field-error mt-3">{{ errorFor('evidence', 'photos') }}</p>
+                <div v-if="evidencePreviews.length" class="mt-4 grid grid-cols-3 gap-2"><div v-for="(preview, index) in evidencePreviews" :key="preview" class="relative aspect-square overflow-hidden rounded-xl bg-zinc-800"><img :src="preview" alt="Pratonton bukti" class="h-full w-full object-cover"><button type="button" class="absolute right-1 top-1 rounded-full bg-black/75 px-2 py-1 text-xs font-bold" :aria-label="`Buang foto ${index + 1}`" @click="removeEvidence(index)">Buang</button></div></div>
+                <label class="mt-4 block text-sm font-bold">Nota tugasan <span class="font-normal text-zinc-500">(pilihan)</span><textarea v-model.trim="completionNote" maxlength="500" rows="5" class="field mt-2 h-auto pb-3 pt-8" placeholder="Contoh: kawasan ditutup atau bekalan tidak mencukupi" v-bind="validationAttrs('evidence', 'note')"></textarea></label>
+                <p v-if="errorFor('evidence', 'note')" :id="errorId('evidence', 'note')" class="field-error">{{ errorFor('evidence', 'note') }}</p>
                 <button :disabled="busy || !evidenceFiles.length" class="primary-button mt-5">Hantar bukti & tandakan selesai</button>
                 <p class="mt-3 text-center text-xs text-amber-300">Tugasan yang selesai tidak boleh dibuka semula oleh cleaner.</p>
             </form>
@@ -1592,7 +1486,7 @@ function chooseAdminDate(event) {
 
         <div v-if="viewingEvidence" class="modal-backdrop">
             <div class="modal-card max-w-3xl">
-                <div class="flex justify-between gap-3"><div><h2 class="font-black">{{ viewingEvidence.text }}</h2><p class="mt-1 text-xs text-zinc-500">{{ formatTimestamp(viewingEvidence.completedAt) }} - {{ viewingEvidence.creditHours }} hrs</p></div><button class="small-button" @click="viewingEvidence = null">x</button></div>
+                <div class="flex justify-between gap-3"><div><h2 class="font-black">{{ viewingEvidence.text }}</h2><p class="mt-1 text-xs text-zinc-500">{{ formatTimestamp(viewingEvidence.completedAt) }} - {{ viewingEvidence.creditHours }} hrs</p></div><button class="small-button" @click="viewingEvidence = null">Close</button></div>
                 <p v-if="viewingEvidence.type === 'weekly'" class="mt-3 text-xs text-sky-300">Weekly - due {{ displayAdminDate(viewingEvidence.originalDueDate) }} - final scheduled date {{ displayAdminDate(viewingEvidence.scheduledDate) }}</p>
                 <p v-if="viewingEvidence.completionNote" class="mt-3 rounded-xl border border-zinc-700 bg-zinc-900 p-3 text-sm text-zinc-300">Note: {{ viewingEvidence.completionNote }}</p>
                 <div class="mt-5 grid gap-3 sm:grid-cols-2"><a v-for="photo in viewingEvidence.evidence" :key="photo.id" :href="photo.url" target="_blank" rel="noopener" class="overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900"><img :src="photo.url" loading="lazy" alt="Task evidence photo" class="max-h-96 w-full object-contain"></a></div>
@@ -1602,34 +1496,52 @@ function chooseAdminDate(event) {
 
         <div v-if="reopeningTask" class="modal-backdrop">
             <form class="modal-card" @submit.prevent="reopenTask">
-                <div class="flex justify-between gap-3"><div><h2 class="font-black">Reopen completed task</h2><p class="mt-1 text-sm text-zinc-400">{{ reopeningTask.text }}</p></div><button type="button" class="small-button" @click="closeReopen">x</button></div>
+                <div class="flex justify-between gap-3"><div><h2 class="font-black">Reopen completed task</h2><p class="mt-1 text-sm text-zinc-400">{{ reopeningTask.text }}</p></div><button type="button" class="small-button" @click="closeReopen">Close</button></div>
                 <p class="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-100">The previous proof will no longer appear in task history. It is retained securely in the audit log.</p>
-                <label class="mt-5 block text-sm font-bold">Reason for reopening<textarea v-model.trim="reopenReason" required maxlength="1000" rows="4" class="field mt-2 h-auto py-3" placeholder="Explain why the proof was uploaded by mistake"></textarea></label>
+                <label class="mt-5 block text-sm font-bold">Reason for reopening<textarea v-model.trim="reopenReason" required maxlength="1000" rows="4" class="field mt-2 h-auto py-3" placeholder="Explain why the proof was uploaded by mistake" v-bind="validationAttrs('reopen', 'reason')"></textarea></label>
+                <p v-if="errorFor('reopen', 'reason')" :id="errorId('reopen', 'reason')" class="field-error">{{ errorFor('reopen', 'reason') }}</p>
                 <button :disabled="busy || !reopenReason.trim()" class="primary-button mt-5">Reopen task</button>
             </form>
         </div>
 
         <div v-if="editing || sessionEditing" class="modal-backdrop">
             <form class="modal-card" @submit.prevent="sessionEditing ? saveSession() : saveEdit()">
-                <div class="flex justify-between"><h2 class="font-black">{{ sessionEditing ? 'Edit Session' : 'Edit Template' }}</h2><button type="button" class="small-button" @click="editing = null; sessionEditing = null">x</button></div>
+                <div class="flex justify-between"><h2 class="font-black">{{ sessionEditing ? 'Edit Session' : 'Edit Template' }}</h2><button type="button" class="small-button" @click="editing = null; sessionEditing = null">Close</button></div>
                 <div class="mt-5 space-y-3">
-                    <input v-if="sessionEditing" v-model.trim="editForm.name" required maxlength="100" class="field" placeholder="Session name">
+                    <template v-if="sessionEditing">
+                        <label class="form-label">Session name<input v-model.trim="editForm.name" required maxlength="100" class="field" placeholder="For example, 4:00 PM - 6:00 PM" v-bind="validationAttrs('sessionEdit', 'name')"></label>
+                        <p v-if="errorFor('sessionEdit', 'name')" :id="errorId('sessionEdit', 'name')" class="field-error">{{ errorFor('sessionEdit', 'name') }}</p>
+                    </template>
                     <template v-else>
-                        <select v-model="editForm.task_type" class="field" disabled><option value="daily">Daily</option><option value="weekly">Weekly</option></select>
-                        <input v-model.trim="editForm.task_name" required maxlength="255" class="field" placeholder="Task name">
-                        <select v-model="editForm.task_session_id" required class="field"><option v-for="session in activeSessions" :key="session.id" :value="session.id">{{ session.name }}</option></select>
-                        <select v-if="editForm.task_type === 'weekly'" v-model.number="editForm.due_weekday" class="field"><option v-for="day in 7" :key="day" :value="day">{{ weekdayName(day) }}</option></select>
-                        <select v-model="editForm.collection_mode" class="field"><option value="single">Single collection</option><option value="multiple">Multiple collections</option><option value="all">All collections</option></select>
-                        <select v-if="editForm.collection_mode === 'single'" v-model="editForm.single_collection_id" required class="field"><option v-for="collection in taskCollections" :key="collection.id" :value="collection.id">{{ collectionDisplayName(collection) }}</option></select>
+                        <label class="form-label">Task type<select v-model="editForm.task_type" class="field" disabled><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+                        <label class="form-label">Task name<input v-model.trim="editForm.task_name" required maxlength="255" class="field" placeholder="For example, Mop the lobby" v-bind="validationAttrs('taskEdit', 'task_name')"></label>
+                        <p v-if="errorFor('taskEdit', 'task_name')" :id="errorId('taskEdit', 'task_name')" class="field-error">{{ errorFor('taskEdit', 'task_name') }}</p>
+                        <label class="form-label">Work session<select v-model="editForm.task_session_id" required class="field" v-bind="validationAttrs('taskEdit', 'task_session_id')"><option v-for="session in activeSessions" :key="session.id" :value="session.id">{{ session.name }}</option></select></label>
+                        <label v-if="editForm.task_type === 'weekly'" class="form-label">Weekly due day<select v-model.number="editForm.due_weekday" class="field" v-bind="validationAttrs('taskEdit', 'due_weekday')"><option v-for="day in 5" :key="day" :value="day">{{ weekdayName(day) }}</option></select></label>
+                        <label class="form-label">Where this task appears<select v-model="editForm.collection_mode" class="field"><option value="single">One rotation</option><option value="multiple">Selected rotations</option><option value="all">All rotations</option></select></label>
+                        <label v-if="editForm.collection_mode === 'single'" class="form-label">Rotation<select v-model="editForm.single_collection_id" required class="field" v-bind="validationAttrs('taskEdit', 'task_collection_ids')"><option v-for="collection in taskCollections" :key="collection.id" :value="collection.id">{{ collectionDisplayName(collection) }}</option></select></label>
                         <div v-else-if="editForm.collection_mode === 'multiple'" class="rounded-2xl border border-zinc-700 bg-zinc-900 p-3">
-                            <p class="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">Choose collections</p>
+                            <p class="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">Choose rotations</p>
                             <label v-for="collection in taskCollections" :key="collection.id" class="mt-3 flex items-center gap-3 text-sm text-zinc-300"><input v-model="editForm.task_collection_ids" type="checkbox" :value="collection.id"><span>{{ collectionDisplayName(collection) }}</span></label>
                         </div>
-                        <input v-model.number="editForm.credit_hours" required type="number" min="0.25" max="24" step="0.25" class="field">
+                        <p v-if="errorFor('taskEdit', 'task_collection_ids')" :id="errorId('taskEdit', 'task_collection_ids')" class="field-error">{{ errorFor('taskEdit', 'task_collection_ids') }}</p>
+                        <label class="form-label">Credit hours<input v-model.number="editForm.credit_hours" required type="number" min="0.25" max="24" step="0.25" class="field" v-bind="validationAttrs('taskEdit', 'credit_hours')"></label>
+                        <p v-if="errorFor('taskEdit', 'credit_hours')" :id="errorId('taskEdit', 'credit_hours')" class="field-error">{{ errorFor('taskEdit', 'credit_hours') }}</p>
                     </template>
                 </div>
                 <button class="primary-button mt-5">Save changes</button>
             </form>
+        </div>
+
+        <div v-if="confirmation" class="modal-backdrop">
+            <section class="modal-card" role="alertdialog" aria-modal="true" aria-labelledby="confirmation-title" aria-describedby="confirmation-description">
+                <h2 id="confirmation-title" class="font-black">{{ confirmation.title }}</h2>
+                <p id="confirmation-description" class="mt-3 text-sm leading-relaxed text-zinc-300">{{ confirmation.description }}</p>
+                <div class="mt-6 flex flex-wrap justify-end gap-3">
+                    <button type="button" class="small-button" :disabled="busy" @click="closeConfirmation">Cancel</button>
+                    <button type="button" class="small-button border-rose-400/50 bg-rose-400/10 text-rose-200" :disabled="busy" @click="confirmAction">{{ confirmation.confirmLabel }}</button>
+                </div>
+            </section>
         </div>
     </div>
 </template>
@@ -1637,12 +1549,26 @@ function chooseAdminDate(event) {
 <style scoped>
 .field { width: 100%; height: 2.75rem; border-radius: .75rem; border: 1px solid rgb(63 63 70); background: #121212; padding: 0 .75rem; font-size: .875rem; outline: none; }
 .field:focus { border-color: #ED4264; }
-.primary-button { width: 100%; height: 2.75rem; border-radius: .75rem; background: linear-gradient(to right, #ED4264, #FFEDBC); color: #18181b; font-size: .875rem; font-weight: 800; }
+.field[aria-invalid='true'] { border-color: #fb7185; }
+.form-label { display: grid; gap: .35rem; color: rgb(212 212 216); font-size: .8125rem; font-weight: 650; }
+.field-error { color: #fda4af; font-size: .8125rem; font-weight: 600; line-height: 1.35; }
+.primary-button { width: 100%; height: 2.75rem; border-radius: .75rem; background: linear-gradient(to right, #ED4264, #FFEDBC); color: #18181b; font-size: .875rem; font-weight: 560; }
 .primary-button:disabled { opacity: .5; }
-.small-button { border: 1px solid rgb(82 82 91); border-radius: .6rem; padding: .45rem .65rem; font-size: .7rem; font-weight: 700; }
+.small-button { border: 1px solid rgb(82 82 91); border-radius: .6rem; padding: .45rem .65rem; font-size: .8125rem; font-weight: 560; }
 .small-button:disabled { opacity: .25; }
-.theme-toggle { display: inline-flex; width: 2.5rem; height: 2.5rem; align-items: center; justify-content: center; }
+.checklist-date-weekday { font-weight: 650; line-height: 1.2; }
+.checklist-date-value { font-weight: 450; line-height: 1.35; }
+.theme-toggle { display: inline-flex; min-width: 2.5rem; height: 2.5rem; align-items: center; justify-content: center; gap: .4rem; padding: 0 .65rem; font-size: .75rem; font-weight: 650; }
 .theme-toggle svg { width: 1.125rem; height: 1.125rem; }
+.history-nav-button,
+.calendar-nav-button { display: inline-flex; width: 2.75rem; height: 2.75rem; flex: 0 0 auto; align-items: center; justify-content: center; border: 1px solid rgb(82 82 91); border-radius: .75rem; background: #121212; color: rgb(228 228 231); }
+.history-nav-button svg,
+.calendar-nav-button svg { width: 1rem; height: 1rem; }
+.history-nav-button:hover,
+.calendar-nav-button:hover { border-color: rgb(161 161 170); background: #27272a; }
+.history-selected-date { display: grid; gap: .15rem; min-width: min(100%, 16rem); }
+.history-selected-date span { color: rgb(161 161 170); font-size: .7rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.history-selected-date strong { color: rgb(244 244 245); font-size: .9375rem; }
 .cleaner-logout { color: #fb7185; }
 .cleaner-logout:hover { color: #fda4af; }
 .theme-toggle:focus-visible,
@@ -1651,14 +1577,15 @@ function chooseAdminDate(event) {
 .modal-card { width: 100%; max-width: 32rem; max-height: 92vh; overflow-y: auto; border: 1px solid rgb(82 82 91); border-radius: 1rem; background: #171717; padding: 1.25rem; box-shadow: 0 25px 50px -12px rgb(0 0 0 / .7); }
 .theme-light { background: #f8fafc; color: #18181b; }
 .theme-light :is(header, .modal-card, [class*="bg-[#121212]"]) { background-color: #f8fafc; }
-.theme-light [class*="bg-zinc-900"] { background-color: #fff; }
+.theme-light [class*="bg-zinc-900"], .theme-light [class*="bg-zinc-950"] { background-color: #fff; }
 .theme-light [class*="bg-zinc-800"] { background-color: #e4e4e7; }
 .theme-light [class*="bg-rose-950"] { background-color: #fff1f2; }
 .theme-light [class*="bg-emerald-950"] { background-color: #ecfdf5; }
-.theme-light [class*="text-zinc-100"] { color: #18181b; }
+.theme-light [class*="text-zinc-100"], .theme-light [class*="text-zinc-200"] { color: #18181b; }
 .theme-light [class*="text-zinc-300"] { color: #3f3f46; }
 .theme-light [class*="text-zinc-400"], .theme-light [class*="text-zinc-500"] { color: #52525b; }
 .theme-light [class*="text-zinc-600"] { color: #71717a; }
+.theme-light [class*="text-zinc-700"], .theme-light [class*="text-zinc-800"] { color: #94a3b8; }
 .theme-light [class*="text-rose-100"],
 .theme-light [class*="text-rose-200"],
 .theme-light [class*="text-rose-300"] { color: #be123c; }
@@ -1671,6 +1598,15 @@ function chooseAdminDate(event) {
 .theme-light .field,
 .theme-light .small-button,
 .theme-light .theme-toggle { background-color: #fff; border-color: #cbd5e1; color: #18181b; color-scheme: light; }
+.theme-light .form-label,
+.theme-light .sunday-date-picker__label { color: #334155; }
+.theme-light .sunday-date-picker__trigger,
+.theme-light .sunday-date-picker__popover,
+.theme-light .history-nav-button,
+.theme-light .calendar-nav-button { background-color: #fff; border-color: #cbd5e1; color: #18181b; }
+.theme-light .sunday-date-picker__days button.is-outside { color: #94a3b8; }
+.theme-light .history-selected-date span { color: #64748b; }
+.theme-light .history-selected-date strong { color: #0f172a; }
 .theme-light .field { caret-color: #be123c; }
 .theme-light .field::placeholder { color: #71717a; opacity: 1; }
 .theme-light .field:focus { border-color: #e11d48; box-shadow: 0 0 0 3px rgb(225 29 72 / .12); }
@@ -1681,6 +1617,7 @@ function chooseAdminDate(event) {
 .theme-light .cleaner-logout:focus-visible { outline-color: #be123c; }
 .theme-light .cleaner-logout { color: #be123c; }
 .theme-light .cleaner-logout:hover { color: #9f1239; }
+.theme-light .checklist-date-weekday { color: #18181b; }
 .theme-light .admin-tab-active { background-color: #fff1f2; border-color: #fda4af; color: #be123c; }
 .theme-light .admin-tab:not(.admin-tab-active) { border-color: transparent; }
 .theme-light .admin-tab:not(.admin-tab-active):hover { background-color: #fff; border-color: transparent; color: #18181b; }
@@ -1689,7 +1626,7 @@ function chooseAdminDate(event) {
     .field,
     .primary-button { font-size: .9375rem; }
     .primary-button,
-    .small-button { font-weight: 600; }
+    .small-button { font-weight: 420; }
     .small-button { font-size: .8125rem; }
 }
 </style>

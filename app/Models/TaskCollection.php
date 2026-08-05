@@ -10,12 +10,14 @@ class TaskCollection extends Model
     protected $fillable = [
         'name',
         'is_default',
+        'rotation_order',
     ];
 
     protected function casts(): array
     {
         return [
             'is_default' => 'boolean',
+            'rotation_order' => 'integer',
         ];
     }
 

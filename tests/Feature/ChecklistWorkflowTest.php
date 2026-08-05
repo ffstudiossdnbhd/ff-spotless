@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\ChecklistDayStatus;
 use App\Models\DailyChecklist;
+use App\Models\AuditLog;
 use App\Models\TaskCollection;
 use App\Models\TaskCollectionSchedule;
 use App\Models\TaskSession;
@@ -16,6 +17,7 @@ use App\Services\ChecklistMaterializer;
 use App\Services\EvidenceWatermarker;
 use App\Services\OperationalDate;
 use App\Services\StatisticsService;
+use App\Services\TaskCollectionResolver;
 use App\Services\WeeklyTaskScheduler;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -59,6 +61,48 @@ class ChecklistWorkflowTest extends TestCase
         $this->assertSame($template->id, $sheet->sole()->task_template_id);
         $this->assertSame('Pagi', $sheet->sole()->session_name);
         $this->assertSame('1.50', $sheet->sole()->credit_hours);
+    }
+
+    public function test_weekends_do_not_materialize_current_or_future_daily_tasks(): void
+    {
+        $template = $this->dailyTemplate('Weekday only');
+        $saturday = CarbonImmutable::parse('2026-07-18', 'Asia/Kuala_Lumpur');
+
+        $items = app(ChecklistMaterializer::class)->forDate($saturday);
+
+        $this->assertCount(0, $items);
+        $this->assertDatabaseHas('checklist_materializations', ['date' => $saturday->toDateString()]);
+        $this->assertDatabaseMissing('daily_checklists', [
+            'task_template_id' => $template->id,
+            'date' => $saturday->toDateString(),
+        ]);
+    }
+
+    public function test_rotations_repeat_in_creation_order_from_the_sunday_cycle_anchor(): void
+    {
+        $this->loginAdmin();
+        $this->post(route('admin.collections.store'), ['name' => 'Rotation A'])->assertRedirect(route('admin.index'));
+        $this->post(route('admin.collections.store'), ['name' => 'Rotation B'])->assertRedirect(route('admin.index'));
+
+        $a = TaskCollection::query()->where('name', 'Rotation A')->sole();
+        $b = TaskCollection::query()->where('name', 'Rotation B')->sole();
+        $resolver = app(TaskCollectionResolver::class);
+
+        $this->assertSame($a->id, $resolver->forDate(CarbonImmutable::parse('2026-07-15', 'Asia/Kuala_Lumpur'))->id);
+        $this->assertSame($b->id, $resolver->forDate(CarbonImmutable::parse('2026-07-19', 'Asia/Kuala_Lumpur'))->id);
+        $this->assertSame($a->id, $resolver->forDate(CarbonImmutable::parse('2026-07-26', 'Asia/Kuala_Lumpur'))->id);
+    }
+
+    public function test_audit_log_records_login_attempts_and_admin_state_changes_without_credentials(): void
+    {
+        $this->post(route('admin.login'), ['password' => 'not-the-password'])->assertSessionHasErrors('password');
+        $this->loginAdmin();
+        $this->post(route('admin.sessions.store'), ['name' => 'Malam'])->assertRedirect(route('admin.index'));
+
+        $this->assertDatabaseHas('audit_logs', ['action' => 'admin.login_failed']);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'admin.login_succeeded']);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'session.created']);
+        $this->assertArrayNotHasKey('password', AuditLog::query()->where('action', 'admin.login_failed')->sole()->metadata ?? []);
     }
 
     public function test_admin_can_manage_daily_templates_with_relational_sessions_and_credits(): void
@@ -140,7 +184,7 @@ class ChecklistWorkflowTest extends TestCase
             'task_session_id' => $session->id,
             'applies_to_all_collections' => false,
             'task_collection_ids' => [$this->defaultCollection()->id],
-            'due_weekday' => 6,
+            'due_weekday' => 4,
             'credit_hours' => 3,
         ])->assertRedirect(route('admin.index'));
         $this->assertSame('Cuci semua kipas', $template->refresh()->task_name);
@@ -269,7 +313,7 @@ class ChecklistWorkflowTest extends TestCase
         $this->assertSame(['Collection B weekly'], $items['weekly']->pluck('task_name')->all());
     }
 
-    public function test_weekly_task_is_available_early_then_rolls_and_misses_after_sunday(): void
+    public function test_weekly_task_misses_before_the_weekend_without_being_postponed_to_it(): void
     {
         $template = $this->weeklyTemplate('Cuci stor', dueWeekday: 5);
         $scheduler = app(WeeklyTaskScheduler::class);
@@ -281,15 +325,10 @@ class ChecklistWorkflowTest extends TestCase
 
         $scheduler->advanceThrough(CarbonImmutable::parse('2026-07-18', 'Asia/Kuala_Lumpur'));
         $occurrence = WeeklyTaskOccurrence::query()->where('weekly_task_template_id', $template->id)->firstOrFail();
-        $this->assertSame('2026-07-18', $occurrence->scheduled_date->toDateString());
-        $template->forceFill(['task_name' => 'Cuci stor utama'])->save();
-        $scheduler->updateTemplateSnapshots($template);
-        $this->assertSame('2026-07-18', $occurrence->refresh()->scheduled_date->toDateString());
-        $this->assertCount(1, $occurrence->postponements);
-
-        $scheduler->advanceThrough(CarbonImmutable::parse('2026-07-20', 'Asia/Kuala_Lumpur'));
-        $this->assertSame('missed', $occurrence->refresh()->status);
-        $this->assertCount(2, $occurrence->postponements);
+        $this->assertSame('2026-07-17', $occurrence->scheduled_date->toDateString());
+        $this->assertSame('missed', $occurrence->status);
+        $this->assertCount(0, $occurrence->postponements);
+        $this->assertCount(0, $scheduler->forChecklistDate(CarbonImmutable::parse('2026-07-18', 'Asia/Kuala_Lumpur')));
     }
 
     public function test_mc_locks_the_day_and_moves_a_due_weekly_task(): void
@@ -381,6 +420,52 @@ class ChecklistWorkflowTest extends TestCase
         $this->assertSame('Area closed while cleaning.', $task->refresh()->completion_note);
     }
 
+    public function test_completion_accepts_up_to_five_evidence_photos(): void
+    {
+        Storage::fake('local');
+        $this->fakeWatermarker();
+        $task = $this->dailyTask();
+        $photos = array_map(fn () => $this->proof(), range(1, 5));
+
+        $this->post(route('tasks.daily.complete', $task), [
+            'date' => $task->date->toDateString(),
+            'photos' => $photos,
+        ])->assertRedirect(route('checklist.index', ['date' => $task->date->toDateString()]));
+
+        $this->assertTrue($task->refresh()->is_completed);
+        $this->assertCount(5, $task->evidence);
+    }
+
+    public function test_completion_rejects_a_sixth_evidence_photo(): void
+    {
+        $task = $this->dailyTask();
+        $photos = array_map(fn () => $this->proof(), range(1, 6));
+
+        $this->post(route('tasks.daily.complete', $task), [
+            'date' => $task->date->toDateString(),
+            'photos' => $photos,
+        ])->assertSessionHasErrors('photos');
+
+        $this->assertFalse($task->refresh()->is_completed);
+    }
+
+    public function test_completion_rejects_an_evidence_photo_larger_than_ten_megabytes(): void
+    {
+        $task = $this->dailyTask();
+        $png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nXsAAAAASUVORK5CYII=');
+        $tooLarge = UploadedFile::fake()->createWithContent(
+            'too-large.png',
+            $png.str_repeat("\0", (10241 * 1024) - strlen($png)),
+        );
+
+        $this->post(route('tasks.daily.complete', $task), [
+            'date' => $task->date->toDateString(),
+            'photos' => [$tooLarge],
+        ])->assertSessionHasErrors('photos.0');
+
+        $this->assertFalse($task->refresh()->is_completed);
+    }
+
     public function test_admin_can_reopen_a_current_daily_task_with_an_audit_record(): void
     {
         Storage::fake('local');
@@ -460,7 +545,7 @@ class ChecklistWorkflowTest extends TestCase
         ])->assertSessionHasErrors('items');
     }
 
-    public function test_statistics_count_closed_daily_work_and_weekly_postponements(): void
+    public function test_statistics_return_the_simplified_overview_and_five_day_trend(): void
     {
         $today = app(OperationalDate::class)->today();
         DB::table('statistics_tracking')->update(['started_on' => $today->subDay()->toDateString()]);
@@ -477,9 +562,34 @@ class ChecklistWorkflowTest extends TestCase
 
         $this->assertSame(1, $stats['overview']['completed']);
         $this->assertSame(1, $stats['overview']['pending']);
-        $this->assertSame(1, $stats['overview']['mcDays']);
-        $this->assertSame(2.0, $stats['overview']['plannedCredits']);
-        $this->assertSame(1.0, $stats['overview']['completedCredits']);
+        $this->assertSame(2, $stats['overview']['totalTasks']);
+        $this->assertSame(['completed', 'missed', 'pending', 'completionRate', 'totalTasks'], array_keys($stats['overview']));
+        $this->assertCount(5, $stats['trend']);
+        $this->assertSame([
+            $today->subDays(6)->toDateString(),
+            $today->subDays(5)->toDateString(),
+            $today->subDays(2)->toDateString(),
+            $today->subDay()->toDateString(),
+            $today->toDateString(),
+        ], array_column($stats['trend'], 'date'));
+        $this->assertSame($today->toDateString(), $stats['trend'][4]['date']);
+    }
+
+    public function test_statistics_trend_uses_the_previous_weekdays_when_today_is_monday(): void
+    {
+        CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-07-20 09:00:00.123456', 'Asia/Kuala_Lumpur'));
+        $today = app(OperationalDate::class)->today();
+        DB::table('statistics_tracking')->update(['started_on' => '2026-07-14']);
+
+        $stats = app(StatisticsService::class)->build($today->subDays(29), $today);
+
+        $this->assertSame([
+            '2026-07-14',
+            '2026-07-15',
+            '2026-07-16',
+            '2026-07-17',
+            '2026-07-20',
+        ], array_column($stats['trend'], 'date'));
     }
 
     public function test_admin_endpoints_require_master_session_and_cleaner_page_is_anonymous(): void
@@ -596,6 +706,15 @@ class ChecklistWorkflowTest extends TestCase
         $this->assertStringContainsString('Buka senarai hari ini', $source);
         $this->assertStringContainsString('Hantar bukti & tandakan selesai', $source);
         $this->assertStringContainsString('() => closeEvidence(true)', $source);
+        $this->assertStringContainsString("{ key: 'tasks', label: 'Manage Tasks' }", $source);
+        $this->assertStringContainsString("{ key: 'collections', label: 'Rotations' }", $source);
+        $this->assertStringNotContainsString('Weekly Task Editor', $source);
+        $this->assertStringNotContainsString('Daily Task Editor', $source);
+        $this->assertStringContainsString('Rotation calendar', $source);
+        $this->assertStringContainsString('Latest five working days through today', $source);
+        $this->assertStringContainsString('auditActorTone', $source);
+        $this->assertStringContainsString('isWeekend: [0, 6].includes(sundayIndex(cursor))', $source);
+        $this->assertStringContainsString('maxFileMb }} MB setiap satu', $source);
     }
 
     private function taskSession(string $name = 'Pagi'): TaskSession

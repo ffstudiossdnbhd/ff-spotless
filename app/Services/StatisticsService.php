@@ -2,11 +2,8 @@
 
 namespace App\Services;
 
-use App\Models\ChecklistDayStatus;
 use App\Models\DailyChecklist;
-use App\Models\TaskSession;
 use App\Models\WeeklyTaskOccurrence;
-use App\Models\WeeklyTaskPostponement;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
@@ -28,50 +25,41 @@ class StatisticsService
         $this->daily->catchUpThrough($this->dates->today());
         $this->weekly->advanceThrough($this->dates->today());
 
+        $today = $this->dates->today();
+        $trendDates = $this->latestWorkingDaysThrough($today, 5);
+        $trendFrom = $trendDates[0];
+        $queryFrom = $from->lessThan($trendFrom) ? $from : $trendFrom;
+        $queryTo = $today;
+
         $dailyTasks = DailyChecklist::query()
-            ->whereDate('date', '>=', $from->toDateString())
-            ->whereDate('date', '<=', $to->toDateString())
+            ->whereDate('date', '>=', $queryFrom->toDateString())
+            ->whereDate('date', '<=', $queryTo->toDateString())
             ->get();
         $weekly = WeeklyTaskOccurrence::query()
-            ->where(function ($query) use ($from, $to): void {
-                $query->where(function ($scheduled) use ($from, $to): void {
-                    $scheduled->whereDate('scheduled_date', '>=', $from->toDateString())
-                        ->whereDate('scheduled_date', '<=', $to->toDateString());
-                })->orWhere(function ($completed) use ($from, $to): void {
-                    $completed->whereDate('completed_on', '>=', $from->toDateString())
-                        ->whereDate('completed_on', '<=', $to->toDateString());
+            ->where(function ($query) use ($queryFrom, $queryTo): void {
+                $query->where(function ($scheduled) use ($queryFrom, $queryTo): void {
+                    $scheduled->whereDate('scheduled_date', '>=', $queryFrom->toDateString())
+                        ->whereDate('scheduled_date', '<=', $queryTo->toDateString());
+                })->orWhere(function ($completed) use ($queryFrom, $queryTo): void {
+                    $completed->whereDate('completed_on', '>=', $queryFrom->toDateString())
+                        ->whereDate('completed_on', '<=', $queryTo->toDateString());
                 });
             })
             ->get();
-        $sessions = TaskSession::query()->orderBy('sort_order')->get(['id', 'name']);
-        $today = $this->dates->today();
-        $trend = [];
-        $overview = [
-            'completed' => 0,
-            'missed' => 0,
-            'pending' => 0,
-            'plannedCredits' => 0.0,
-            'completedCredits' => 0.0,
-        ];
 
-        for ($cursor = $from; $cursor->lessThanOrEqualTo($to); $cursor = $cursor->addDay()) {
+        $dailyByDate = $dailyTasks->groupBy(static fn (DailyChecklist $task): string => $task->date->toDateString());
+        $weeklyByScheduledDate = $weekly->groupBy(static fn (WeeklyTaskOccurrence $task): string => $task->scheduled_date->toDateString());
+        $weeklyByCompletedDate = $weekly
+            ->filter(static fn (WeeklyTaskOccurrence $task): bool => $task->completed_on !== null)
+            ->groupBy(static fn (WeeklyTaskOccurrence $task): string => $task->completed_on->toDateString());
+
+        $rowForDate = function (CarbonImmutable $cursor) use ($dailyByDate, $weeklyByScheduledDate, $weeklyByCompletedDate, $today): array {
             $date = $cursor->toDateString();
-            $row = [
-                'date' => $date,
-                'completed' => 0,
-                'missed' => 0,
-                'pending' => 0,
-                'plannedCredits' => 0.0,
-                'completedCredits' => 0.0,
-            ];
+            $row = ['date' => $date, 'completed' => 0, 'missed' => 0, 'pending' => 0];
 
-            foreach ($dailyTasks->filter(fn ($task) => $task->date->toDateString() === $date) as $task) {
-                $credits = (float) $task->credit_hours;
-                $row['plannedCredits'] += $credits;
-
+            foreach ($dailyByDate->get($date, []) as $task) {
                 if ($task->is_completed) {
                     $row['completed']++;
-                    $row['completedCredits'] += $credits;
                 } elseif ($cursor->lessThan($today)) {
                     $row['missed']++;
                 } else {
@@ -79,66 +67,40 @@ class StatisticsService
                 }
             }
 
-            foreach ($weekly as $task) {
-                $credits = (float) $task->credit_hours;
-
-                if ($task->scheduled_date->toDateString() === $date) {
-                    $row['plannedCredits'] += $credits;
-                    if ($task->status === 'missed') {
-                        $row['missed']++;
-                    } elseif ($task->status === 'pending') {
-                        $row['pending']++;
-                    }
+            foreach ($weeklyByScheduledDate->get($date, []) as $task) {
+                if ($task->status === 'missed') {
+                    $row['missed']++;
+                } elseif ($task->status === 'pending') {
+                    $row['pending']++;
                 }
+            }
 
-                if ($task->status === 'completed' && $task->completed_on?->toDateString() === $date) {
+            foreach ($weeklyByCompletedDate->get($date, []) as $task) {
+                if ($task->status === 'completed') {
                     $row['completed']++;
-                    $row['completedCredits'] += $credits;
                 }
             }
 
-            foreach (array_keys($overview) as $key) {
-                $overview[$key] += $row[$key];
-            }
-            $trend[] = $row;
+            return $row;
+        };
+
+        $overview = ['completed' => 0, 'missed' => 0, 'pending' => 0];
+
+        for ($cursor = $from; $cursor->lessThanOrEqualTo($to); $cursor = $cursor->addDay()) {
+            $row = $rowForDate($cursor);
+            $overview['completed'] += $row['completed'];
+            $overview['missed'] += $row['missed'];
+            $overview['pending'] += $row['pending'];
         }
 
         $closed = $overview['completed'] + $overview['missed'];
         $overview['completionRate'] = $closed > 0 ? round(($overview['completed'] / $closed) * 100) : 0;
-        $overview['mcDays'] = ChecklistDayStatus::query()
-            ->whereDate('date', '>=', $from->toDateString())
-            ->whereDate('date', '<=', $to->toDateString())
-            ->where('is_unavailable', true)
-            ->count();
-        $overview['postponements'] = WeeklyTaskPostponement::query()
-            ->whereDate('from_date', '>=', $from->toDateString())
-            ->whereDate('from_date', '<=', $to->toDateString())
-            ->count();
+        $overview['totalTasks'] = $overview['completed'] + $overview['missed'] + $overview['pending'];
 
-        $sessionRows = $sessions->map(function (TaskSession $session) use ($dailyTasks, $weekly, $today, $from, $to): array {
-            $daily = $dailyTasks->where('task_session_id', $session->id);
-            $weeklies = $weekly->where('task_session_id', $session->id);
-            $plannedWeeklies = $weeklies->filter(fn ($task) => $task->scheduled_date->betweenIncluded($from, $to));
-            $completedWeeklies = $weeklies->filter(fn ($task) => $task->status === 'completed' && $task->completed_on?->betweenIncluded($from, $to));
-
-            return [
-                'id' => $session->id,
-                'name' => $session->name,
-                'plannedCredits' => round(
-                    $daily->sum(fn ($task) => (float) $task->credit_hours)
-                    + $plannedWeeklies->sum(fn ($task) => (float) $task->credit_hours),
-                    2,
-                ),
-                'completedCredits' => round(
-                    $daily->where('is_completed', true)->sum(fn ($task) => (float) $task->credit_hours)
-                    + $completedWeeklies->sum(fn ($task) => (float) $task->credit_hours),
-                    2,
-                ),
-                'completed' => $daily->where('is_completed', true)->count() + $completedWeeklies->count(),
-                'missed' => $daily->filter(fn ($task) => ! $task->is_completed && $task->date->lessThan($today))->count()
-                    + $plannedWeeklies->where('status', 'missed')->count(),
-            ];
-        })->values()->all();
+        $trend = [];
+        foreach ($trendDates as $cursor) {
+            $trend[] = $rowForDate($cursor);
+        }
 
         return [
             'from' => $from->toDateString(),
@@ -146,12 +108,22 @@ class StatisticsService
             'trackingStart' => $this->trackingStart(),
             'overview' => $overview,
             'trend' => $trend,
-            'sessions' => $sessionRows,
-            'weeklyStatus' => [
-                'completed' => $weekly->filter(fn ($task) => $task->status === 'completed' && $task->completed_on?->betweenIncluded($from, $to))->count(),
-                'pending' => $weekly->filter(fn ($task) => $task->status === 'pending' && $task->scheduled_date->betweenIncluded($from, $to))->count(),
-                'missed' => $weekly->filter(fn ($task) => $task->status === 'missed' && $task->scheduled_date->betweenIncluded($from, $to))->count(),
-            ],
         ];
+    }
+
+    /**
+     * @return list<CarbonImmutable>
+     */
+    private function latestWorkingDaysThrough(CarbonImmutable $today, int $count): array
+    {
+        $days = [];
+
+        for ($cursor = $today; count($days) < $count; $cursor = $cursor->subDay()) {
+            if ($this->dates->isWorkingDay($cursor)) {
+                $days[] = $cursor;
+            }
+        }
+
+        return array_reverse($days);
     }
 }
