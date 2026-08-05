@@ -49,6 +49,7 @@ const editing = ref(null);
 const sessionEditing = ref(null);
 const sortables = [];
 let themeTransitionTimer;
+let noticeDismissTimer;
 const statsFrom = ref('');
 const statsTo = ref('');
 
@@ -188,7 +189,10 @@ watch(taskCollections, (collections) => {
 onBeforeUnmount(() => {
     destroySortables();
     clearEvidenceFiles();
-    if (typeof window !== 'undefined') window.clearTimeout(themeTransitionTimer);
+    if (typeof window !== 'undefined') {
+        window.clearTimeout(themeTransitionTimer);
+        window.clearTimeout(noticeDismissTimer);
+    }
     if (typeof document !== 'undefined') document.documentElement.classList.remove('theme-transitioning');
 });
 
@@ -622,13 +626,34 @@ function formatTimestamp(value) {
 }
 
 function setNotice(message) {
+    clearNoticeDismissTimer();
     actionError.value = '';
     notice.value = message;
+
+    if (typeof window !== 'undefined') {
+        noticeDismissTimer = window.setTimeout(() => {
+            notice.value = '';
+            noticeDismissTimer = undefined;
+        }, 4500);
+    }
 }
 
 function closeStatus() {
+    clearNoticeDismissTimer();
     notice.value = '';
     actionError.value = '';
+}
+
+function clearNoticeDismissTimer() {
+    if (typeof window !== 'undefined' && noticeDismissTimer) {
+        window.clearTimeout(noticeDismissTimer);
+    }
+
+    noticeDismissTimer = undefined;
+}
+
+function dismissNoticeOnInteraction() {
+    if (notice.value) closeStatus();
 }
 
 function clearErrors(scope) {
@@ -663,6 +688,7 @@ function fail(errors, fallback, scope = 'global') {
     }), {});
     const message = Object.values(normalized).flat()[0] ?? fallback;
     formErrors.value = { ...formErrors.value, [scope]: normalized };
+    clearNoticeDismissTimer();
     actionError.value = message;
     notice.value = '';
     nextTick(() => document.querySelector('[data-error-summary]')?.focus());
@@ -1133,7 +1159,7 @@ function chooseAdminDate(date) {
 </script>
 
 <template>
-    <div :class="theme === 'light' ? 'theme-light' : 'theme-dark'" class="min-h-screen bg-[#121212] text-zinc-100">
+    <div :class="theme === 'light' ? 'theme-light' : 'theme-dark'" class="min-h-screen bg-[#121212] text-zinc-100" @pointerdown.capture="dismissNoticeOnInteraction" @keydown.capture="dismissNoticeOnInteraction">
         <div v-if="notice || actionError" data-error-summary tabindex="-1" class="fixed inset-x-4 top-4 z-[80] mx-auto flex max-w-lg items-start gap-3 rounded-xl border px-4 py-3 text-sm font-semibold shadow-2xl" :class="actionError ? 'border-rose-500/40 bg-rose-950 text-rose-100' : 'border-emerald-500/40 bg-emerald-950 text-emerald-100'" :role="actionError ? 'alert' : 'status'" aria-live="polite">
             <span class="min-w-0 flex-1">{{ actionError || notice }}</span>
             <button type="button" class="small-button shrink-0" aria-label="Dismiss notification" @click="closeStatus">Dismiss</button>
