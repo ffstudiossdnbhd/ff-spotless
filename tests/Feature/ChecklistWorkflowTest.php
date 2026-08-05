@@ -15,6 +15,7 @@ use App\Models\WeeklyTaskOccurrence;
 use App\Models\WeeklyTaskPostponement;
 use App\Models\WeeklyTaskTemplate;
 use App\Services\ChecklistMaterializer;
+use App\Services\ChecklistWorkflow;
 use App\Services\EvidenceWatermarker;
 use App\Services\OperationalDate;
 use App\Services\StatisticsService;
@@ -126,6 +127,109 @@ class ChecklistWorkflowTest extends TestCase
         $this->assertSame('2026-07-12', $calendar['weeks'][2]['weekStart']);
         $this->assertSame($a->id, $calendar['weeks'][2]['rotation']['id']);
         $this->assertSame($c->id, $calendar['weeks'][4]['rotation']['id']);
+    }
+
+    public function test_rotation_snapshot_repair_rebuilds_incomplete_current_tasks_with_the_correct_rotation(): void
+    {
+        $dates = app(OperationalDate::class);
+        $today = $dates->today();
+        $weekStart = $today->startOfWeek(CarbonImmutable::MONDAY);
+        RotationCycleSetting::query()->updateOrCreate([
+            'id' => 1,
+        ], [
+            'anchor_week_start' => $today->startOfWeek(CarbonImmutable::SUNDAY)->toDateString(),
+        ]);
+
+        $a = TaskCollection::query()->create(['name' => 'Rotation A', 'is_default' => false, 'rotation_order' => 1]);
+        TaskCollection::query()->create(['name' => 'Rotation B', 'is_default' => false, 'rotation_order' => 2]);
+        $c = TaskCollection::query()->create(['name' => 'Rotation C', 'is_default' => false, 'rotation_order' => 3]);
+
+        $aDaily = $this->dailyTemplate('Rotation A daily');
+        $aDaily->forceFill(['task_collection_id' => $a->id])->save();
+        $aDaily->taskCollections()->sync([$a->id]);
+
+        $cDaily = $this->dailyTemplate('Stale Rotation C daily');
+        $cDaily->forceFill(['task_collection_id' => $c->id])->save();
+        $cDaily->taskCollections()->sync([$c->id]);
+
+        $completedCDaily = $this->dailyTemplate('Completed Rotation C daily');
+        $completedCDaily->forceFill(['task_collection_id' => $c->id])->save();
+        $completedCDaily->taskCollections()->sync([$c->id]);
+
+        $staleDaily = DailyChecklist::query()->create([
+            'date' => $today->toDateString(),
+            'task_template_id' => $cDaily->id,
+            'task_name' => $cDaily->task_name,
+            'task_session_id' => $cDaily->task_session_id,
+            'session_name' => $cDaily->taskSession->name,
+            'credit_hours' => $cDaily->credit_hours,
+            'is_completed' => false,
+        ]);
+        $completedDaily = DailyChecklist::query()->create([
+            'date' => $today->toDateString(),
+            'task_template_id' => $completedCDaily->id,
+            'task_name' => $completedCDaily->task_name,
+            'task_session_id' => $completedCDaily->task_session_id,
+            'session_name' => $completedCDaily->taskSession->name,
+            'credit_hours' => $completedCDaily->credit_hours,
+            'is_completed' => true,
+            'completed_at' => $dates->nowUtc(),
+        ]);
+        DB::table('checklist_materializations')->insert(['date' => $today->toDateString()]);
+
+        $aWeekly = $this->weeklyTemplate('Rotation A weekly', CarbonImmutable::WEDNESDAY);
+        $aWeekly->forceFill(['task_collection_id' => $a->id])->save();
+        $aWeekly->taskCollections()->sync([$a->id]);
+
+        $cWeekly = $this->weeklyTemplate('Stale Rotation C weekly', CarbonImmutable::WEDNESDAY);
+        $cWeekly->forceFill(['task_collection_id' => $c->id])->save();
+        $cWeekly->taskCollections()->sync([$c->id]);
+
+        $completedCWeekly = $this->weeklyTemplate('Completed Rotation C weekly', CarbonImmutable::WEDNESDAY);
+        $completedCWeekly->forceFill(['task_collection_id' => $c->id])->save();
+        $completedCWeekly->taskCollections()->sync([$c->id]);
+
+        $dueDate = $weekStart->addDays(CarbonImmutable::WEDNESDAY - CarbonImmutable::MONDAY);
+        $staleWeekly = WeeklyTaskOccurrence::query()->create([
+            'week_start' => $weekStart->toDateString(),
+            'weekly_task_template_id' => $cWeekly->id,
+            'task_session_id' => $cWeekly->task_session_id,
+            'task_name' => $cWeekly->task_name,
+            'session_name' => $cWeekly->taskSession->name,
+            'credit_hours' => $cWeekly->credit_hours,
+            'original_due_date' => $dueDate->toDateString(),
+            'scheduled_date' => $dueDate->toDateString(),
+            'status' => 'pending',
+        ]);
+        $completedWeekly = WeeklyTaskOccurrence::query()->create([
+            'week_start' => $weekStart->toDateString(),
+            'weekly_task_template_id' => $completedCWeekly->id,
+            'task_session_id' => $completedCWeekly->task_session_id,
+            'task_name' => $completedCWeekly->task_name,
+            'session_name' => $completedCWeekly->taskSession->name,
+            'credit_hours' => $completedCWeekly->credit_hours,
+            'original_due_date' => $dueDate->toDateString(),
+            'scheduled_date' => $dueDate->toDateString(),
+            'status' => 'completed',
+            'completed_at' => $dates->nowUtc(),
+            'completed_on' => $today->toDateString(),
+        ]);
+        DB::table('weekly_materializations')->insert(['week_start' => $weekStart->toDateString()]);
+
+        $migration = require database_path('migrations/2026_08_05_000011_rebuild_rotation_snapshots_after_anchor_timezone_fix.php');
+        $migration->up();
+
+        $this->assertDatabaseMissing('daily_checklists', ['id' => $staleDaily->id]);
+        $this->assertDatabaseHas('daily_checklists', ['id' => $completedDaily->id]);
+        $this->assertDatabaseMissing('checklist_materializations', ['date' => $today->toDateString()]);
+        $this->assertDatabaseMissing('weekly_task_occurrences', ['id' => $staleWeekly->id]);
+        $this->assertDatabaseHas('weekly_task_occurrences', ['id' => $completedWeekly->id]);
+        $this->assertDatabaseMissing('weekly_materializations', ['week_start' => $weekStart->toDateString()]);
+
+        $checklist = app(ChecklistWorkflow::class)->forDate($today);
+
+        $this->assertTrue($checklist['daily']->contains('task_template_id', $aDaily->id));
+        $this->assertTrue($checklist['weekly']->contains('weekly_task_template_id', $aWeekly->id));
     }
 
     public function test_audit_log_records_login_attempts_and_admin_state_changes_without_credentials(): void
@@ -621,22 +725,6 @@ class ChecklistWorkflowTest extends TestCase
         ], array_column($stats['trend'], 'date'));
     }
 
-    public function test_workload_exposes_each_sessions_median_active_task_duration(): void
-    {
-        $this->dailyTemplate('Short task', 'Pagi', 0.5);
-        $this->dailyTemplate('Medium task', 'Pagi', 1.5);
-        $this->weeklyTemplate('Long task', 1, 2.0);
-        $this->loginAdmin();
-
-        $this->get(route('admin.index'))
-            ->assertOk()
-            ->assertInertia(fn (Assert $page) => $page
-                ->component('Dashboard')
-                ->where('workload.0.sessionName', 'Pagi')
-                ->where('workload.0.medianTaskCredits', 1.5)
-                ->where('workload.1.medianTaskCredits', null));
-    }
-
     public function test_admin_endpoints_require_master_session_and_cleaner_page_is_anonymous(): void
     {
         $this->get(route('checklist.index'))->assertOk();
@@ -763,7 +851,7 @@ class ChecklistWorkflowTest extends TestCase
         $this->assertStringContainsString('collectionCalendarWeeks', $source);
         $this->assertStringContainsString('rotation-calendar-week-label', $source);
         $this->assertStringContainsString('Rotation: {{ shortCollectionName(collectionDisplayName(week.rotation)) }}', $source);
-        $this->assertStringContainsString('Median task duration:', $source);
+        $this->assertStringNotContainsString('Median task duration:', $source);
         $this->assertStringContainsString("adminIconPath('logout')", $source);
         $this->assertStringContainsString('maxFileMb }} MB setiap satu', $source);
     }

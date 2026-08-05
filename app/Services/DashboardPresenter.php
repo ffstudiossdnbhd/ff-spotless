@@ -19,7 +19,6 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Collection as SupportCollection;
 
 class DashboardPresenter
 {
@@ -294,17 +293,12 @@ class DashboardPresenter
             $weeklySessionTemplates = $weeklyTemplates->where('task_session_id', $session->id);
             $daily = $dailyTemplates->sum(fn ($task) => (float) $task->credit_hours);
             $weekly = $weeklySessionTemplates->sum(fn ($task) => (float) $task->credit_hours);
-            $taskCredits = $dailyTemplates
-                ->pluck('credit_hours')
-                ->concat($weeklySessionTemplates->pluck('credit_hours'));
-
             return [
                 'sessionId' => $session->id,
                 'sessionName' => $session->name,
                 'dailyCredits' => round($daily, 2),
                 'weeklyCredits' => round($weekly, 2),
                 'expectedWeeklyCredits' => round(($daily * 5) + $weekly, 2),
-                'medianTaskCredits' => $this->medianCredits($taskCredits),
             ];
         });
         $average = $rows->avg('expectedWeeklyCredits') ?: 0;
@@ -313,29 +307,6 @@ class DashboardPresenter
             ...$row,
             'isOverloaded' => $average > 0 && $row['expectedWeeklyCredits'] > $average * 1.2,
         ])->values()->all();
-    }
-
-    /**
-     * @param  SupportCollection<int, int|float|string>  $credits
-     */
-    private function medianCredits(SupportCollection $credits): ?float
-    {
-        $values = $credits
-            ->map(static fn ($credit): float => (float) $credit)
-            ->sort()
-            ->values();
-        $count = $values->count();
-
-        if ($count === 0) {
-            return null;
-        }
-
-        $middle = intdiv($count, 2);
-        $median = $count % 2 === 0
-            ? ($values[$middle - 1] + $values[$middle]) / 2
-            : $values[$middle];
-
-        return round($median, 2);
     }
 
     /**
