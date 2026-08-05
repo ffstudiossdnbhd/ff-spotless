@@ -674,6 +674,11 @@ function loginAdmin() {
     ));
 }
 
+function openAdminLogin() {
+    screen.value = 'admin-login';
+    nextTick(() => window.setTimeout(() => document.getElementById('admin-password')?.focus(), 0));
+}
+
 function logoutAdmin() {
     router.post('/admin/logout', {}, {
         onFinish: () => { screen.value = 'welcome'; },
@@ -1121,7 +1126,7 @@ function chooseAdminDate(date) {
             <h1 class="text-3xl font-black tracking-tight">FF Spotless</h1>
             <p class="mt-3 text-sm leading-relaxed text-zinc-400">Senarai semak pembersihan harian dan tugasan mingguan.</p>
             <button class="mt-8 h-14 rounded-2xl bg-gradient-to-r from-[#ED4264] to-[#FFEDBC] font-black text-zinc-950" @click="openChecklist()">Buka senarai hari ini</button>
-            <button class="mt-3 h-12 rounded-2xl border border-zinc-700 text-sm font-bold text-zinc-300" @click="screen = 'admin-login'">Admin</button>
+            <button class="mt-3 h-12 rounded-2xl border border-zinc-700 text-sm font-bold text-zinc-300" @click="openAdminLogin">Admin</button>
         </main>
 
         <main v-else-if="screen === 'admin-login'" class="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12">

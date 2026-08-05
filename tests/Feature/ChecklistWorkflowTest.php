@@ -834,6 +834,8 @@ class ChecklistWorkflowTest extends TestCase
         $this->assertStringNotContainsString('Penta'.'dbir', $source);
         $this->assertStringNotContainsString('penta'.'dbir', $source);
         $this->assertStringContainsString('Admin Access', $source);
+        $this->assertStringContainsString('function openAdminLogin()', $source);
+        $this->assertStringContainsString("document.getElementById('admin-password')?.focus()", $source);
         $this->assertStringContainsString('Dashboard', $source);
         $this->assertStringContainsString('Back to today', $source);
         $this->assertStringContainsString('Buka senarai hari ini', $source);
