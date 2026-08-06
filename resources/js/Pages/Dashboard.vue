@@ -1486,7 +1486,7 @@ function chooseAdminDate(date) {
                                 <label v-for="collection in taskCollections" :key="collection.id" class="mt-3 flex items-center gap-3 text-sm text-zinc-300"><input v-model="taskForm.task_collection_ids" type="checkbox" :value="collection.id"><span>{{ collectionDisplayName(collection) }}</span></label>
                             </div>
                             <p v-if="errorFor('task', 'task_collection_ids')" :id="errorId('task', 'task_collection_ids')" class="field-error">{{ errorFor('task', 'task_collection_ids') }}</p>
-                            <p class="text-xs text-zinc-500">Single = one rotation. Multiple = selected rotations. All = show the task no matter which rotation is active.</p>
+                            <p class="text-xs text-zinc-500">Single = one rotation.<br>Multiple = selected rotations.<br>All = show the task no matter which rotation is active.</p>
                             <button :disabled="busy" class="primary-button">Add task</button>
                         </form>
                         <div class="space-y-6">
