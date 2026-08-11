@@ -15,6 +15,7 @@ class WeeklyTaskScheduler
     public function __construct(
         private readonly ChecklistMaterializer $materializer,
         private readonly OperationalDate $dates,
+        private readonly OfficeCalendar $calendar,
         private readonly TaskCollectionResolver $collections,
     ) {}
 
@@ -129,9 +130,12 @@ class WeeklyTaskScheduler
                     if (
                         $occurrence->status === 'pending'
                         && $occurrence->scheduled_date->isSameDay($date)
-                        && $this->isUnavailable($date)
                     ) {
-                        $this->postponeOrMiss($occurrence, 'unavailable');
+                        if ($this->calendar->isPublicHoliday($date)) {
+                            $this->postponeForPublicHoliday($occurrence);
+                        } elseif ($this->isUnavailable($date)) {
+                            $this->postponeOrMiss($occurrence, 'unavailable');
+                        }
                     }
                 }, 3);
             });
@@ -144,20 +148,28 @@ class WeeklyTaskScheduler
     {
         $today = $this->dates->today();
 
-        if (! $this->dates->isWorkingDay($date) && $date->greaterThanOrEqualTo($today)) {
+        if ($this->calendar->isPublicHoliday($date)
+            || (! $this->dates->isWorkingDay($date) && $date->greaterThanOrEqualTo($today))) {
             return new Collection;
         }
 
         $this->materializeWeek($date);
         $this->advanceThrough($date->lessThan($today) ? $date : $today);
+        $weekStart = $date->startOfWeek(CarbonImmutable::MONDAY)->toDateString();
         $query = WeeklyTaskOccurrence::query()
-            ->withCount(['evidence', 'postponements'])
-            ->whereDate('week_start', $date->startOfWeek(CarbonImmutable::MONDAY)->toDateString());
+            ->withCount(['evidence', 'postponements']);
 
         if ($date->isSameDay($today)) {
-            $query->where(function ($builder) use ($date): void {
-                $builder->where('status', 'pending')
-                    ->orWhereDate('completed_on', $date->toDateString());
+            $query->where(function ($builder) use ($date, $weekStart): void {
+                $builder->where(function ($currentWeek) use ($weekStart): void {
+                    $currentWeek->whereDate('week_start', $weekStart)
+                        ->where('status', 'pending');
+                })->orWhereDate('completed_on', $date->toDateString())
+                    ->orWhere(function ($carried) use ($date, $weekStart): void {
+                        $carried->where('status', 'pending')
+                            ->whereDate('scheduled_date', $date->toDateString())
+                            ->whereDate('week_start', '!=', $weekStart);
+                    });
             });
         } else {
             $query->where(function ($builder) use ($date): void {
@@ -200,6 +212,41 @@ class WeeklyTaskScheduler
             });
     }
 
+    /**
+     * Rebase future pending occurrences whenever the public-holiday calendar
+     * changes. Future occurrences cannot have valid completion history, so
+     * rebuilding their holiday-only postponements is safe and deterministic.
+     */
+    public function reconcilePublicHolidaySchedulesFrom(CarbonImmutable $from): void
+    {
+        DB::transaction(function () use ($from): void {
+            $this->materializer->acquireTemplateSynchronizationLock();
+            $occurrences = WeeklyTaskOccurrence::query()
+                ->where('status', 'pending')
+                ->whereDate('original_due_date', '>=', $from->toDateString())
+                ->orderBy('original_due_date')
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            $occurrences->each(function (WeeklyTaskOccurrence $occurrence): void {
+                $occurrence->postponements()
+                    ->where('reason', 'public_holiday')
+                    ->delete();
+                $occurrence->forceFill([
+                    'scheduled_date' => $occurrence->original_due_date->toDateString(),
+                    'missed_reason' => null,
+                ])->save();
+            });
+
+            $occurrences->each(function (WeeklyTaskOccurrence $occurrence): void {
+                if ($this->calendar->isPublicHoliday($occurrence->scheduled_date)) {
+                    $this->postponeForPublicHoliday($occurrence);
+                }
+            });
+        }, 3);
+    }
+
     public function deactivateTemplate(WeeklyTaskTemplate $template): void
     {
         DB::transaction(function () use ($template): void {
@@ -223,6 +270,12 @@ class WeeklyTaskScheduler
     {
         $from = $occurrence->scheduled_date;
 
+        if ($this->calendar->isPublicHoliday($from)) {
+            $this->postponeForPublicHoliday($occurrence);
+
+            return;
+        }
+
         if ($from->dayOfWeekIso >= CarbonImmutable::FRIDAY) {
             $occurrence->forceFill([
                 'status' => 'missed',
@@ -241,6 +294,21 @@ class WeeklyTaskScheduler
             ],
         );
         $occurrence->forceFill(['scheduled_date' => $to->toDateString()])->save();
+    }
+
+    private function postponeForPublicHoliday(WeeklyTaskOccurrence $occurrence): void
+    {
+        $from = $occurrence->scheduled_date;
+        $to = $this->calendar->nextWorkingDayAfter($from);
+
+        WeeklyTaskPostponement::query()->firstOrCreate(
+            ['weekly_task_occurrence_id' => $occurrence->id, 'from_date' => $from->toDateString()],
+            ['to_date' => $to->toDateString(), 'reason' => 'public_holiday'],
+        );
+        $occurrence->forceFill([
+            'scheduled_date' => $to->toDateString(),
+            'missed_reason' => null,
+        ])->save();
     }
 
     private function isUnavailable(CarbonImmutable $date): bool

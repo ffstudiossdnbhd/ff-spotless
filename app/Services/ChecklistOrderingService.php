@@ -14,6 +14,7 @@ class ChecklistOrderingService
 {
     public function __construct(
         private readonly OperationalDate $dates,
+        private readonly OfficeCalendar $calendar,
         private readonly ChecklistMaterializer $materializer,
     ) {}
 
@@ -26,7 +27,7 @@ class ChecklistOrderingService
             abort(403, 'Hanya tugasan hari ini boleh disusun semula.');
         }
 
-        if (! $this->dates->isWorkingDay($date)) {
+        if (! $this->calendar->isWorkingDay($date)) {
             abort(403, 'Tugasan hanya boleh disusun semula pada hari bekerja.');
         }
 
@@ -81,10 +82,17 @@ class ChecklistOrderingService
 
         $weekStart = $this->dates->fromDateString($date)->startOfWeek()->toDateString();
         $weekly = WeeklyTaskOccurrence::query()
-            ->whereDate('week_start', $weekStart)
             ->where('task_session_id', $sessionId)
-            ->where(function ($query) use ($date): void {
-                $query->where('status', 'pending')->orWhereDate('completed_on', $date);
+            ->where(function ($query) use ($date, $weekStart): void {
+                $query->where(function ($currentWeek) use ($weekStart): void {
+                    $currentWeek->whereDate('week_start', $weekStart)
+                        ->where('status', 'pending');
+                })->orWhereDate('completed_on', $date)
+                    ->orWhere(function ($carried) use ($date, $weekStart): void {
+                        $carried->where('status', 'pending')
+                            ->whereDate('scheduled_date', $date)
+                            ->whereDate('week_start', '!=', $weekStart);
+                    });
             })
             ->pluck('id')
             ->map(static fn (int $id): string => 'weekly:'.$id);

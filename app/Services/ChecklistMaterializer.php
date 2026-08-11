@@ -14,6 +14,7 @@ class ChecklistMaterializer
 {
     public function __construct(
         private readonly OperationalDate $dates,
+        private readonly OfficeCalendar $calendar,
         private readonly TaskCollectionResolver $collections,
     ) {}
 
@@ -24,9 +25,9 @@ class ChecklistMaterializer
     {
         $dateString = $date->toDateString();
 
-        if ($this->shouldSuppressWeekendTasks($date)) {
-            $this->materializeEmptyWeekend($date, $dateString);
-            $this->removeIncompleteWeekendRows($date, $dateString);
+        if ($this->shouldSuppressNonWorkingDayTasks($date)) {
+            $this->materializeEmptyNonWorkingDay($date, $dateString);
+            $this->removeIncompleteNonWorkingDayRows($date, $dateString);
 
             return DailyChecklist::query()
                 ->whereDate('date', $dateString)
@@ -192,8 +193,8 @@ class ChecklistMaterializer
     {
         $dateString = $date->toDateString();
 
-        if ($this->shouldSuppressWeekendTasks($date)) {
-            $this->removeIncompleteWeekendRows($date, $dateString);
+        if ($this->shouldSuppressNonWorkingDayTasks($date)) {
+            $this->removeIncompleteNonWorkingDayRows($date, $dateString);
 
             return;
         }
@@ -274,13 +275,14 @@ class ChecklistMaterializer
         }, 3);
     }
 
-    private function shouldSuppressWeekendTasks(CarbonImmutable $date): bool
+    private function shouldSuppressNonWorkingDayTasks(CarbonImmutable $date): bool
     {
-        return ! $this->dates->isWorkingDay($date)
-            && $date->greaterThanOrEqualTo($this->dates->today());
+        return $this->calendar->isPublicHoliday($date)
+            || (! $this->dates->isWorkingDay($date)
+                && $date->greaterThanOrEqualTo($this->dates->today()));
     }
 
-    private function materializeEmptyWeekend(CarbonImmutable $date, string $dateString): void
+    private function materializeEmptyNonWorkingDay(CarbonImmutable $date, string $dateString): void
     {
         if ($this->isMaterialized($dateString)) {
             return;
@@ -301,7 +303,7 @@ class ChecklistMaterializer
         }, 3);
     }
 
-    private function removeIncompleteWeekendRows(CarbonImmutable $date, string $dateString): void
+    private function removeIncompleteNonWorkingDayRows(CarbonImmutable $date, string $dateString): void
     {
         DB::transaction(function () use ($date, $dateString): void {
             $this->acquireTemplateSynchronizationLock();

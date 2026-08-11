@@ -13,6 +13,7 @@ class StatisticsService
         private readonly ChecklistMaterializer $daily,
         private readonly WeeklyTaskScheduler $weekly,
         private readonly OperationalDate $dates,
+        private readonly OfficeCalendar $calendar,
     ) {}
 
     public function trackingStart(): string
@@ -85,6 +86,10 @@ class StatisticsService
         $overview = ['completed' => 0, 'missed' => 0, 'pending' => 0];
 
         for ($cursor = $from; $cursor->lessThanOrEqualTo($to); $cursor = $cursor->addDay()) {
+            if ($this->calendar->isPublicHoliday($cursor)) {
+                continue;
+            }
+
             $row = $rowForDate($cursor);
             $overview['completed'] += $row['completed'];
             $overview['missed'] += $row['missed'];
@@ -97,7 +102,7 @@ class StatisticsService
 
         $trend = [];
         for ($cursor = $from; $cursor->lessThanOrEqualTo($to); $cursor = $cursor->addDay()) {
-            if ($this->dates->isWorkingDay($cursor)) {
+            if ($this->calendar->isWorkingDay($cursor)) {
                 $trend[] = $rowForDate($cursor);
             }
         }

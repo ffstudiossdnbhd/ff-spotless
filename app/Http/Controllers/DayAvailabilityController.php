@@ -9,6 +9,7 @@ use App\Models\WeeklyTaskOccurrence;
 use App\Models\WeeklyTaskPostponement;
 use App\Services\ChecklistMaterializer;
 use App\Services\AuditLogger;
+use App\Services\OfficeCalendar;
 use App\Services\OperationalDate;
 use App\Services\WeeklyTaskScheduler;
 use Illuminate\Support\Facades\DB;
@@ -19,6 +20,7 @@ class DayAvailabilityController extends Controller
     public function store(
         UpdateDayAvailabilityRequest $request,
         OperationalDate $dates,
+        OfficeCalendar $calendar,
         WeeklyTaskScheduler $scheduler,
         ChecklistMaterializer $materializer,
         AuditLogger $audits,
@@ -30,7 +32,7 @@ class DayAvailabilityController extends Controller
             abort(403, 'Hanya status hari ini boleh dikemas kini.');
         }
 
-        if (! $dates->isWorkingDay($data['date'])) {
+        if (! $calendar->isWorkingDay($data['date'])) {
             abort(403, 'Status MC hanya boleh dikemas kini pada hari bekerja.');
         }
 

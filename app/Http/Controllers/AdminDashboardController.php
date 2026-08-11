@@ -7,6 +7,7 @@ use App\Http\Requests\AdminHistoryRequest;
 use App\Models\TaskCollection;
 use App\Models\TaskCollectionSchedule;
 use App\Models\TaskTemplate;
+use App\Models\PublicHoliday;
 use App\Models\WeeklyTaskTemplate;
 use App\Services\ChecklistWorkflow;
 use App\Services\DashboardPresenter;
@@ -72,6 +73,11 @@ class AdminDashboardController extends Controller
             ->orderBy('id')
             ->get();
 
+        $publicHolidays = PublicHoliday::query()
+            ->orderBy('date')
+            ->orderBy('id')
+            ->get();
+
         return Inertia::render('Dashboard', $presenter->admin(
             $request,
             $date,
@@ -79,6 +85,7 @@ class AdminDashboardController extends Controller
             $weeklyTemplates,
             $collections,
             $collectionSchedules,
+            $publicHolidays,
             $checklist,
             $statistics->build($from, $to),
             $rotationCalendarMonth,

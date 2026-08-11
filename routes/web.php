@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AdminDashboardController;
+use App\Http\Controllers\AdminPublicHolidayController;
 use App\Http\Controllers\AdminSessionController;
 use App\Http\Controllers\AdminTaskReopenController;
 use App\Http\Controllers\ChecklistController;
@@ -42,6 +43,9 @@ Route::post('/admin/login', [AdminSessionController::class, 'store'])
 Route::middleware(EnsureMasterAdmin::class)->prefix('admin')->name('admin.')->group(function (): void {
     Route::post('/logout', [AdminSessionController::class, 'destroy'])->name('logout');
     Route::get('/', [AdminDashboardController::class, 'index'])->name('index');
+    Route::post('/public-holidays', [AdminPublicHolidayController::class, 'store'])->name('public-holidays.store');
+    Route::patch('/public-holidays/{publicHoliday}', [AdminPublicHolidayController::class, 'update'])->name('public-holidays.update');
+    Route::delete('/public-holidays/{publicHoliday}', [AdminPublicHolidayController::class, 'destroy'])->name('public-holidays.destroy');
     Route::post('/templates', [TaskTemplateController::class, 'store'])->name('templates.store');
     Route::patch('/templates/{taskTemplate}', [TaskTemplateController::class, 'update'])->name('templates.update');
     Route::delete('/templates/{taskTemplate}', [TaskTemplateController::class, 'destroy'])->name('templates.destroy');

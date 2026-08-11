@@ -22,6 +22,8 @@ const props = defineProps({
     rotationCalendar: { type: Object, default: () => ({ month: '', weeks: [] }) },
     statistics: { type: Object, default: null },
     workload: { type: Array, default: () => [] },
+    publicHolidays: { type: Array, default: () => [] },
+    publicHoliday: { type: Object, default: null },
 });
 
 const page = usePage();
@@ -67,6 +69,9 @@ const collectionForm = ref({ name: '' });
 const collectionScheduleForm = ref(defaultCollectionScheduleForm());
 const sessionForm = ref({ name: '' });
 const editForm = ref({});
+const publicHolidayForm = ref(defaultPublicHolidayForm());
+const publicHolidayEditing = ref(null);
+const publicHolidayEditForm = ref({});
 const taskListFilters = ref({
     collection_id: 'all',
     task_type: 'all',
@@ -77,12 +82,13 @@ const adminTabs = [
     { key: 'collections', label: 'Rotations', icon: 'rotations' },
     { key: 'sessions', label: 'Work Sessions', icon: 'sessions' },
     { key: 'tasks', label: 'Manage Tasks', icon: 'tasks' },
+    { key: 'public-holidays', label: 'Public Holiday Editor', icon: 'holiday' },
     { key: 'audit', label: 'Audit Log', icon: 'audit' },
 ];
 const adminTabGroups = [
     adminTabs.slice(0, 2),
-    adminTabs.slice(2, 5),
-    adminTabs.slice(5),
+    adminTabs.slice(2, 6),
+    adminTabs.slice(6),
 ];
 
 const activeSessions = computed(() => props.sessions.filter((session) => session.isActive));
@@ -109,10 +115,14 @@ const collectionCalendarWeeks = computed(() => props.rotationCalendar?.weeks ?? 
 const history = computed(() => collectionItems(props.completedTasks));
 const auditLogs = computed(() => collectionItems(props.auditLogs));
 const auditLinks = computed(() => props.auditLogs?.links ?? []);
+const publicHolidays = computed(() => collectionItems(props.publicHolidays)
+    .slice()
+    .sort((left, right) => String(left.date).localeCompare(String(right.date))));
 const today = computed(() => currentTodayString());
+const tomorrow = computed(() => dateOffset(today.value, 1));
 const isToday = computed(() => selectedDate.value === today.value);
 const adminIsToday = computed(() => adminDate.value === today.value);
-const locked = computed(() => props.isReadOnly || props.dayUnavailable || busy.value);
+const locked = computed(() => props.isReadOnly || props.dayUnavailable || Boolean(props.publicHoliday) || busy.value);
 const completedCount = computed(() => localTasks.value.filter((task) => task.completed).length);
 const progress = computed(() => localTasks.value.length ? Math.round((completedCount.value / localTasks.value.length) * 100) : 0);
 const trendChart = Object.freeze({
@@ -217,6 +227,7 @@ function adminIconPath(icon) {
         rotations: 'M20 7v5h-5M4 17v-5h5m8.5-2.5A7 7 0 0 0 6.2 7.2L4 9.5m-1.5 5A7 7 0 0 0 13.8 16.8l2.2-2.3',
         sessions: 'M16 20v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1m6-9a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm10 9v-1a4 4 0 0 0-3-3.87m-1-12a4 4 0 0 1 0 7.75',
         tasks: 'M9 5h6m-6 7h6m-6 7h6M5 5h.01M5 12h.01M5 19h.01',
+        holiday: 'M7 3v3m10-3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm3 8h.01m4 0h.01m4 0h.01m-8 4h.01m4 0h.01',
         audit: 'M6 3h9l3 3v15H6V3Zm8 0v4h4M9 11h6m-6 4h6m-6 4h4',
         logout: 'M10 17l5-5-5-5m5 5H3m18-7v14',
     }[icon] ?? '';
@@ -259,6 +270,13 @@ function defaultTaskForm() {
         task_collection_ids: collectionId ? [collectionId] : [],
         due_weekday: 1,
         credit_hours: 1,
+    };
+}
+
+function defaultPublicHolidayForm() {
+    return {
+        name: '',
+        date: dateOffset(currentTodayString(), 1),
     };
 }
 
@@ -723,6 +741,8 @@ function openAdmin(date = null, options = {}) {
 }
 
 function toggleAvailability() {
+    if (props.publicHoliday) return;
+
     router.post('/checklist/availability', {
         date: selectedDate.value,
         is_unavailable: !props.dayUnavailable,
@@ -842,7 +862,7 @@ function destroySortables() {
 
 function initializeSortables() {
     destroySortables();
-    if (!isToday.value || props.dayUnavailable || screen.value !== 'checklist') return;
+    if (!isToday.value || props.dayUnavailable || props.publicHoliday || screen.value !== 'checklist') return;
     document.querySelectorAll('[data-sortable-session]').forEach((element) => {
         const sessionId = Number(element.dataset.sortableSession);
         sortables.push(Sortable.create(element, {
@@ -925,6 +945,56 @@ function createCollection() {
     router.post('/admin/collections', collectionForm.value, inertiaOptions(
         'Rotation added.', 'Rotation could not be added.', () => collectionForm.value.name = '', 'collection',
     ));
+}
+
+function createPublicHoliday() {
+    router.post('/admin/public-holidays', publicHolidayForm.value, inertiaOptions(
+        'Public holiday added.',
+        'Public holiday could not be added.',
+        () => publicHolidayForm.value = defaultPublicHolidayForm(),
+        'publicHoliday',
+    ));
+}
+
+function editPublicHoliday(holiday) {
+    if (!holiday.isEditable) return;
+
+    publicHolidayEditing.value = holiday;
+    publicHolidayEditForm.value = {
+        name: holiday.name,
+        date: holiday.date,
+    };
+}
+
+function closePublicHolidayEdit(force = false) {
+    if (busy.value && force !== true) return;
+
+    publicHolidayEditing.value = null;
+    publicHolidayEditForm.value = {};
+}
+
+function savePublicHoliday() {
+    if (!publicHolidayEditing.value?.isEditable) return;
+
+    router.patch(`/admin/public-holidays/${publicHolidayEditing.value.id}`, publicHolidayEditForm.value, inertiaOptions(
+        'Public holiday updated.',
+        'Public holiday could not be updated.',
+        () => closePublicHolidayEdit(true),
+        'publicHolidayEdit',
+    ));
+}
+
+function deletePublicHoliday(holiday) {
+    if (!holiday.isEditable) return;
+
+    requestConfirmation({
+        title: 'Delete public holiday?',
+        description: `The office will reopen on ${displayAdminDate(holiday.date)} and future tasks may be restored for that date.`,
+        confirmLabel: 'Delete public holiday',
+        action: () => router.delete(`/admin/public-holidays/${holiday.id}`, inertiaOptions(
+            'Public holiday deleted.', 'Public holiday could not be deleted.', null, 'publicHoliday',
+        )),
+    });
 }
 
 function deleteCollection(collection) {
@@ -1093,6 +1163,9 @@ function auditActionLabel(action) {
         'task_template.archived': 'Task archived',
         'rotation.created': 'Rotation added',
         'rotation.deleted': 'Rotation deleted',
+        'public_holiday.created': 'Public holiday added',
+        'public_holiday.updated': 'Public holiday updated',
+        'public_holiday.deleted': 'Public holiday deleted',
         'availability.marked_unavailable': 'Marked unavailable',
         'availability.marked_available': 'Marked available',
     }[action] ?? action.replaceAll('.', ' ');
@@ -1188,15 +1261,15 @@ function chooseAdminDate(date) {
                         <span class="rounded-full border border-zinc-700 px-2.5 py-1 text-xs font-bold text-zinc-400">{{ sessionCredits(sessionTasks(session.id)) }} jam kredit</span>
                     </header>
                     <div class="space-y-2" :data-sortable-session="session.id">
-                        <article v-for="(task, taskIndex) in sessionTasks(session.id)" :key="task.key" :data-task-key="task.key" class="flex items-center gap-2 rounded-2xl border p-3" :class="dayUnavailable && !task.completed ? 'border-zinc-800 bg-zinc-900/40 opacity-60' : 'border-zinc-700 bg-zinc-900'">
-                            <button v-if="isToday && !dayUnavailable" class="drag-handle inline-flex h-8 w-6 cursor-grab items-center justify-center text-zinc-500" aria-label="Seret untuk menyusun">
+                        <article v-for="(task, taskIndex) in sessionTasks(session.id)" :key="task.key" :data-task-key="task.key" class="flex items-center gap-2 rounded-2xl border p-3" :class="(dayUnavailable || publicHoliday) && !task.completed ? 'border-zinc-800 bg-zinc-900/40 opacity-60' : 'border-zinc-700 bg-zinc-900'">
+                            <button v-if="isToday && !dayUnavailable && !publicHoliday" class="drag-handle inline-flex h-8 w-6 cursor-grab items-center justify-center text-zinc-500" aria-label="Seret untuk menyusun">
                                 <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5"><circle cx="8" cy="5" r="1.7"></circle><circle cx="16" cy="5" r="1.7"></circle><circle cx="8" cy="12" r="1.7"></circle><circle cx="16" cy="12" r="1.7"></circle><circle cx="8" cy="19" r="1.7"></circle><circle cx="16" cy="19" r="1.7"></circle></svg>
                             </button>
-                            <button class="min-w-0 flex-1 text-left" :class="dayUnavailable && !task.completed ? 'cursor-not-allowed' : ''" :disabled="locked || task.completed" @click="openEvidence(task)">
+                            <button class="min-w-0 flex-1 text-left" :class="(dayUnavailable || publicHoliday) && !task.completed ? 'cursor-not-allowed' : ''" :disabled="locked || task.completed" @click="openEvidence(task)">
                                 <span class="flex items-center gap-2">
-                                    <span v-if="!dayUnavailable" class="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border-2" :class="task.completed ? 'border-[#ED4264] bg-[#ED4264] text-white' : 'border-zinc-600'"><span v-if="task.completed">&#10003;</span></span>
+                                    <span v-if="!dayUnavailable && !publicHoliday" class="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border-2" :class="task.completed ? 'border-[#ED4264] bg-[#ED4264] text-white' : 'border-zinc-600'"><span v-if="task.completed">&#10003;</span></span>
                                     <span class="min-w-0">
-                                        <span class="block text-sm font-semibold" :class="task.completed ? 'text-zinc-500 line-through' : dayUnavailable ? 'text-zinc-600' : 'text-zinc-100'">{{ task.text }}</span>
+                                        <span class="block text-sm font-semibold" :class="task.completed ? 'text-zinc-500 line-through' : (dayUnavailable || publicHoliday) ? 'text-zinc-600' : 'text-zinc-100'">{{ task.text }}</span>
                                         <span class="mt-1 flex flex-wrap gap-2 text-xs font-bold uppercase text-zinc-500">
                                             <span>{{ task.creditHours }} jam</span>
                                             <template v-if="task.isWeekly">
@@ -1211,7 +1284,7 @@ function chooseAdminDate(date) {
                                     </span>
                                 </span>
                             </button>
-                            <div v-if="isToday && !dayUnavailable" class="flex flex-col gap-1">
+                            <div v-if="isToday && !dayUnavailable && !publicHoliday" class="flex flex-col gap-1">
                                 <button class="small-button inline-flex h-8 w-8 items-center justify-center p-0 text-zinc-300 disabled:opacity-20" aria-label="Move task up" title="Move task up" :disabled="taskIndex === 0 || busy" @click="moveTask(session.id, task.key, -1)"><svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" class="h-3 w-3"><path d="m10 5 5 6H5l5-6Z"></path></svg></button>
                                 <button class="small-button inline-flex h-8 w-8 items-center justify-center p-0 text-zinc-300 disabled:opacity-20" aria-label="Move task down" title="Move task down" :disabled="taskIndex === sessionTasks(session.id).length - 1 || busy" @click="moveTask(session.id, task.key, 1)"><svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" class="h-3 w-3"><path d="m5 9 5 6 5-6H5Z"></path></svg></button>
                             </div>
@@ -1221,7 +1294,11 @@ function chooseAdminDate(date) {
             </section>
 
             <section class="px-5 pb-6">
-                <label class="flex items-start gap-3 rounded-2xl border p-4" :class="dayUnavailable ? 'border-rose-500/40 bg-rose-500/10' : 'border-zinc-700 bg-zinc-900/50'">
+                <div v-if="publicHoliday" class="rounded-2xl border border-sky-400/40 bg-sky-400/10 p-4">
+                    <strong class="block text-sm text-sky-200">Office closed: {{ publicHoliday.name }}</strong>
+                    <span class="mt-1 block text-xs leading-relaxed text-zinc-300">No cleaning tasks are scheduled for this custom public holiday.</span>
+                </div>
+                <label v-else class="flex items-start gap-3 rounded-2xl border p-4" :class="dayUnavailable ? 'border-rose-500/40 bg-rose-500/10' : 'border-zinc-700 bg-zinc-900/50'">
                     <input type="checkbox" class="mt-1 h-5 w-5 accent-[#ED4264]" :checked="dayUnavailable" :disabled="!isToday || busy" @change="toggleAvailability">
                     <span>
                         <strong class="block text-sm">MC / tidak tersedia hari ini</strong>
@@ -1412,8 +1489,49 @@ function chooseAdminDate(date) {
                         <p v-if="!history.length" class="rounded-2xl border border-dashed border-zinc-700 p-10 text-center text-sm text-zinc-500">No records for this date.</p>
                     </div>
 
+                    <div v-else-if="adminTab === 'public-holidays'" class="grid gap-6 lg:grid-cols-[360px_1fr]">
+                        <form class="space-y-3 rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5" @submit.prevent="createPublicHoliday">
+                            <h2 class="font-black">Add Public Holiday</h2>
+                            <p class="text-sm leading-relaxed text-zinc-400">Add a custom office-closure date. No tasks or statistics will be recorded for that day.</p>
+                            <label class="form-label" for="public-holiday-name">Holiday name</label>
+                            <input id="public-holiday-name" v-model.trim="publicHolidayForm.name" required maxlength="100" class="field" placeholder="For example, Company annual leave" v-bind="validationAttrs('publicHoliday', 'name')">
+                            <p v-if="errorFor('publicHoliday', 'name')" :id="errorId('publicHoliday', 'name')" class="field-error">{{ errorFor('publicHoliday', 'name') }}</p>
+                            <label class="form-label" for="public-holiday-date">Closure date</label>
+                            <input id="public-holiday-date" v-model="publicHolidayForm.date" required type="date" :min="tomorrow" class="field" v-bind="validationAttrs('publicHoliday', 'date')">
+                            <p v-if="errorFor('publicHoliday', 'date')" :id="errorId('publicHoliday', 'date')" class="field-error">{{ errorFor('publicHoliday', 'date') }}</p>
+                            <p class="text-xs leading-relaxed text-zinc-500">Dates must be future weekdays. A closure cannot be changed once its date begins.</p>
+                            <button :disabled="busy" class="primary-button">Add public holiday</button>
+                        </form>
+
+                        <section class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5">
+                            <div class="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                    <h2 class="font-black">Scheduled Public Holidays</h2>
+                                    <p class="mt-1 text-sm text-zinc-400">Custom office closures are shown in date order.</p>
+                                </div>
+                                <span class="rounded-full border border-zinc-700 px-2.5 py-1 text-xs font-black text-zinc-400">{{ publicHolidays.length }} scheduled</span>
+                            </div>
+                            <p v-if="!publicHolidays.length" class="mt-5 rounded-xl border border-dashed border-zinc-700 p-8 text-center text-sm text-zinc-500">No custom public holidays are scheduled.</p>
+                            <div v-else class="mt-5 space-y-2">
+                                <article v-for="holiday in publicHolidays" :key="holiday.id" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-4">
+                                    <div class="min-w-0">
+                                        <h3 class="truncate font-semibold text-zinc-100">{{ holiday.name }}</h3>
+                                        <p class="mt-1 text-xs text-zinc-500">{{ displayAdminDate(holiday.date) }}</p>
+                                    </div>
+                                    <div class="flex shrink-0 items-center gap-2">
+                                        <span v-if="!holiday.isEditable" class="rounded-full border border-zinc-700 px-2 py-1 text-xs font-black uppercase text-zinc-500">Locked</span>
+                                        <template v-else>
+                                            <button type="button" class="small-button" :disabled="busy" @click="editPublicHoliday(holiday)">Edit</button>
+                                            <button type="button" class="small-button text-rose-300" :disabled="busy" @click="deletePublicHoliday(holiday)">Delete</button>
+                                        </template>
+                                    </div>
+                                </article>
+                            </div>
+                        </section>
+                    </div>
+
                     <div v-else-if="adminTab === 'audit'" class="space-y-4">
-                        <div class="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5"><h2 class="font-black">Activity audit log</h2><p class="mt-1 text-sm text-zinc-400">Authentication, task, rotation, work-session, availability, and ordering changes are retained here. Sensitive credentials and file paths are never recorded.</p></div>
+                        <div class="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5"><h2 class="font-black">Activity audit log</h2><p class="mt-1 text-sm text-zinc-400">Authentication, task, rotation, work-session, public-holiday, availability, and ordering changes are retained here. Sensitive credentials and file paths are never recorded.</p></div>
                         <p v-if="!auditLogs.length" class="rounded-2xl border border-dashed border-zinc-700 p-10 text-center text-sm text-zinc-500">No audit activity has been recorded yet.</p>
                         <article v-for="audit in auditLogs" :key="audit.id" class="rounded-2xl border border-zinc-700 bg-zinc-900 p-4"><div class="flex flex-wrap items-start justify-between gap-3"><div><h3 class="font-black">{{ auditActionLabel(audit.action) }}</h3><p v-if="auditDetails(audit)" class="mt-1 text-sm text-zinc-300">{{ auditDetails(audit) }}</p></div><span class="rounded-full px-2 py-1 text-xs font-black uppercase" :class="auditActorTone(audit.actorType)">{{ audit.actorType }}</span></div><p class="mt-3 text-xs text-zinc-500">{{ audit.actorLabel }} - {{ formatTimestamp(audit.occurredAt) }}</p></article>
                         <nav v-if="auditLinks.length > 3" class="flex flex-wrap gap-2" aria-label="Audit log pages"><button v-for="link in auditLinks" :key="link.label" type="button" class="small-button" :class="link.active ? 'border-rose-400 bg-rose-400/10 text-rose-200' : ''" :disabled="!link.url" @click="openAuditPage(link.url)">{{ auditLinkLabel(link.label) }}</button></nav>
@@ -1568,6 +1686,19 @@ function chooseAdminDate(date) {
                 <label class="mt-5 block text-sm font-bold">Reason for reopening<textarea v-model.trim="reopenReason" required maxlength="1000" rows="4" class="field mt-2 h-auto py-3" placeholder="Explain why the proof was uploaded by mistake" v-bind="validationAttrs('reopen', 'reason')"></textarea></label>
                 <p v-if="errorFor('reopen', 'reason')" :id="errorId('reopen', 'reason')" class="field-error">{{ errorFor('reopen', 'reason') }}</p>
                 <button :disabled="busy || !reopenReason.trim()" class="primary-button mt-5">Reopen task</button>
+            </form>
+        </div>
+
+        <div v-if="publicHolidayEditing" class="modal-backdrop">
+            <form class="modal-card" @submit.prevent="savePublicHoliday">
+                <div class="flex justify-between gap-3"><div><h2 class="font-black">Edit Public Holiday</h2><p class="mt-1 text-sm text-zinc-400">Update this future office-closure date.</p></div><button type="button" class="small-button" :disabled="busy" @click="closePublicHolidayEdit">Close</button></div>
+                <div class="mt-5 space-y-3">
+                    <label class="form-label" for="edit-public-holiday-name">Holiday name<input id="edit-public-holiday-name" v-model.trim="publicHolidayEditForm.name" required maxlength="100" class="field" v-bind="validationAttrs('publicHolidayEdit', 'name')"></label>
+                    <p v-if="errorFor('publicHolidayEdit', 'name')" :id="errorId('publicHolidayEdit', 'name')" class="field-error">{{ errorFor('publicHolidayEdit', 'name') }}</p>
+                    <label class="form-label" for="edit-public-holiday-date">Closure date<input id="edit-public-holiday-date" v-model="publicHolidayEditForm.date" required type="date" :min="tomorrow" class="field" v-bind="validationAttrs('publicHolidayEdit', 'date')"></label>
+                    <p v-if="errorFor('publicHolidayEdit', 'date')" :id="errorId('publicHolidayEdit', 'date')" class="field-error">{{ errorFor('publicHolidayEdit', 'date') }}</p>
+                </div>
+                <button :disabled="busy" class="primary-button mt-5">Save changes</button>
             </form>
         </div>
 

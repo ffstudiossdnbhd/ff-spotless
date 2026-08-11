@@ -6,6 +6,7 @@ use App\Models\ChecklistDayStatus;
 use App\Models\ChecklistItemPosition;
 use App\Models\DailyChecklist;
 use App\Models\AuditLog;
+use App\Models\PublicHoliday;
 use App\Models\TaskCollection;
 use App\Models\TaskCollectionSchedule;
 use App\Models\TaskSession;
@@ -25,6 +26,7 @@ class DashboardPresenter
     public function __construct(
         private readonly MasterAdminSession $adminSession,
         private readonly OperationalDate $dates,
+        private readonly OfficeCalendar $calendar,
         private readonly TaskCollectionResolver $collections,
     ) {}
 
@@ -44,6 +46,7 @@ class DashboardPresenter
     /**
      * @param  Collection<int, TaskTemplate>  $templates
      * @param  Collection<int, WeeklyTaskTemplate>  $weeklyTemplates
+     * @param  Collection<int, PublicHoliday>  $publicHolidays
      * @param  array{daily: Collection<int, DailyChecklist>, weekly: Collection<int, WeeklyTaskOccurrence>}  $checklist
      */
     public function admin(
@@ -53,6 +56,7 @@ class DashboardPresenter
         Collection $weeklyTemplates,
         Collection $collections,
         Collection $collectionSchedules,
+        Collection $publicHolidays,
         array $checklist,
         array $statistics,
         CarbonImmutable $rotationCalendarMonth,
@@ -95,6 +99,18 @@ class DashboardPresenter
             'startsOn' => $schedule->starts_on->toDateString(),
             'endsOn' => $schedule->ends_on->toDateString(),
         ])->values()->all();
+        $props['publicHolidays'] = $publicHolidays->map(function (PublicHoliday $holiday): array {
+            return [
+                'id' => $holiday->id,
+                'date' => $holiday->date->toDateString(),
+                'name' => $holiday->name,
+                'isEditable' => $holiday->date->toDateString() > $this->dates->today()->toDateString(),
+            ];
+        })->values()->all();
+        $selectedHoliday = $publicHolidays->first(
+            static fn (PublicHoliday $holiday): bool => $holiday->date->isSameDay($date),
+        );
+        $props['publicHoliday'] = $this->publicHolidayPayload($selectedHoliday instanceof PublicHoliday ? $selectedHoliday : null);
         $props['completedTasks'] = $this->historyItems($date, $checklist);
         $props['rotationCalendar'] = $this->rotationCalendar($rotationCalendarMonth);
         $props['auditLogs'] = $this->auditLogs();
@@ -272,16 +288,48 @@ class DashboardPresenter
                     ->whereDate('date', $dateString)
                     ->where('is_unavailable', true)
                     ->exists(),
+            'publicHoliday' => $this->selectedPublicHoliday($date),
             'uploadLimits' => $this->uploadLimits(),
             'templates' => [],
             'weeklyTemplates' => [],
             'collections' => [],
             'collectionSchedules' => [],
+            'publicHolidays' => [],
             'completedTasks' => [],
             'rotationCalendar' => ['month' => null, 'weeks' => []],
             'auditLogs' => ['data' => [], 'links' => []],
             'statistics' => null,
             'workload' => [],
+        ];
+    }
+
+    /**
+     * @return array{id: int, date: string, name: string}|null
+     */
+    private function selectedPublicHoliday(CarbonImmutable $date): ?array
+    {
+        if (! Schema::hasTable('public_holidays')) {
+            return null;
+        }
+
+        $holiday = $this->calendar->publicHoliday($date);
+
+        return $this->publicHolidayPayload($holiday);
+    }
+
+    /**
+     * @return array{id: int, date: string, name: string}|null
+     */
+    private function publicHolidayPayload(?PublicHoliday $holiday): ?array
+    {
+        if ($holiday === null) {
+            return null;
+        }
+
+        return [
+            'id' => $holiday->id,
+            'date' => $holiday->date->toDateString(),
+            'name' => $holiday->name,
         ];
     }
 

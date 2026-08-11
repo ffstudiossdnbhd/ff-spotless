@@ -18,6 +18,7 @@ class TaskCompletionService
 {
     public function __construct(
         private readonly OperationalDate $dates,
+        private readonly OfficeCalendar $calendar,
         private readonly WeeklyTaskScheduler $weekly,
         private readonly ChecklistMaterializer $materializer,
         private readonly EvidenceWatermarker $watermarker,
@@ -95,11 +96,13 @@ class TaskCompletionService
                 $this->assertAvailableDate($date);
                 $locked = WeeklyTaskOccurrence::query()->lockForUpdate()->findOrFail($occurrence->id);
 
-                if (
-                    $locked->status !== 'pending'
-                    || $locked->week_start->greaterThan($this->dates->today())
-                    || $locked->week_start->endOfWeek()->lessThan($this->dates->today())
-                ) {
+                $today = $this->dates->today();
+                $isCurrentWeek = ! $locked->week_start->greaterThan($today)
+                    && ! $locked->week_start->endOfWeek()->lessThan($today);
+                $isCarryoverDueToday = $locked->scheduled_date->isSameDay($today)
+                    && $locked->week_start->lessThan($today->startOfWeek());
+
+                if ($locked->status !== 'pending' || (! $isCurrentWeek && ! $isCarryoverDueToday)) {
                     throw ValidationException::withMessages(['task' => 'Tugasan mingguan ini tidak boleh diselesaikan pada hari ini.']);
                 }
 
@@ -140,7 +143,7 @@ class TaskCompletionService
             abort(403, 'Hanya senarai semak hari ini boleh dikemas kini.');
         }
 
-        if (! $this->dates->isWorkingDay($date)) {
+        if (! $this->calendar->isWorkingDay($date)) {
             abort(403, 'Tugasan hanya boleh dikemas kini pada hari bekerja.');
         }
 

@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\ChecklistDayStatus;
 use App\Models\DailyChecklist;
 use App\Models\AuditLog;
+use App\Models\PublicHoliday;
 use App\Models\RotationCycleSetting;
 use App\Models\TaskCollection;
 use App\Models\TaskCollectionSchedule;
@@ -79,6 +80,264 @@ class ChecklistWorkflowTest extends TestCase
             'task_template_id' => $template->id,
             'date' => $saturday->toDateString(),
         ]);
+    }
+
+    public function test_public_holiday_management_requires_an_admin_session(): void
+    {
+        $this->post(route('admin.public-holidays.store'), [
+            'date' => '2026-07-16',
+            'name' => 'Office closure',
+        ])
+            ->assertRedirect(route('home'))
+            ->assertSessionHasErrors('password');
+    }
+
+    public function test_admin_can_manage_a_future_weekday_public_holiday(): void
+    {
+        $this->loginAdmin();
+
+        $this->post(route('admin.public-holidays.store'), [
+            'date' => '2026-07-16',
+            'name' => ' <strong> Office closure </strong> ',
+        ])->assertRedirect(route('admin.index'));
+
+        $holiday = PublicHoliday::query()->whereDate('date', '2026-07-16')->sole();
+        $this->assertSame('Office closure', $holiday->name);
+
+        $this->get(route('admin.index', ['date' => '2026-07-16']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Dashboard')
+                ->where('publicHolidays.0.id', $holiday->id)
+                ->where('publicHolidays.0.date', '2026-07-16')
+                ->where('publicHolidays.0.name', 'Office closure')
+                ->where('publicHolidays.0.isEditable', true)
+                ->where('publicHoliday.id', $holiday->id)
+                ->where('publicHoliday.date', '2026-07-16')
+                ->where('publicHoliday.name', 'Office closure'));
+
+        $this->patch(route('admin.public-holidays.update', $holiday), [
+            'date' => '2026-07-17',
+            'name' => ' <em> Rescheduled closure </em> ',
+        ])->assertRedirect(route('admin.index'));
+
+        $this->assertSame('2026-07-17', $holiday->refresh()->date->toDateString());
+        $this->assertSame('Rescheduled closure', $holiday->name);
+
+        $this->delete(route('admin.public-holidays.destroy', $holiday))
+            ->assertRedirect(route('admin.index'));
+
+        $this->assertDatabaseMissing('public_holidays', ['id' => $holiday->id]);
+    }
+
+    public function test_public_holiday_validation_requires_a_unique_future_weekday_named_closure_and_locks_old_dates(): void
+    {
+        $this->loginAdmin();
+
+        $this->post(route('admin.public-holidays.store'), [
+            'date' => '16/07/2026',
+            'name' => '',
+        ])->assertSessionHasErrors(['date', 'name']);
+
+        $this->post(route('admin.public-holidays.store'), [
+            'date' => '2026-07-16',
+            'name' => str_repeat('A', 101),
+        ])->assertSessionHasErrors('name');
+
+        $this->post(route('admin.public-holidays.store'), [
+            'date' => '2026-07-18',
+            'name' => 'Weekend closure',
+        ])->assertSessionHasErrors('date');
+
+        $this->post(route('admin.public-holidays.store'), [
+            'date' => '2026-07-15',
+            'name' => 'Today closure',
+        ])->assertSessionHasErrors('date');
+
+        $this->post(route('admin.public-holidays.store'), [
+            'date' => '2026-07-14',
+            'name' => 'Past closure',
+        ])->assertSessionHasErrors('date');
+
+        $this->post(route('admin.public-holidays.store'), [
+            'date' => '2026-07-16',
+            'name' => 'Office closure',
+        ])->assertRedirect(route('admin.index'));
+
+        $this->post(route('admin.public-holidays.store'), [
+            'date' => '2026-07-16',
+            'name' => 'Duplicate closure',
+        ])->assertSessionHasErrors('date');
+
+        $currentHoliday = PublicHoliday::query()->create([
+            'date' => '2026-07-15',
+            'name' => 'Existing current closure',
+        ]);
+        $pastHoliday = PublicHoliday::query()->create([
+            'date' => '2026-07-14',
+            'name' => 'Existing past closure',
+        ]);
+
+        $this->patch(route('admin.public-holidays.update', $currentHoliday), [
+            'date' => '2026-07-17',
+            'name' => 'Attempted current update',
+        ])->assertSessionHasErrors('date');
+        $this->delete(route('admin.public-holidays.destroy', $currentHoliday))
+            ->assertSessionHasErrors('date');
+
+        $this->patch(route('admin.public-holidays.update', $pastHoliday), [
+            'date' => '2026-07-17',
+            'name' => 'Attempted past update',
+        ])->assertSessionHasErrors('date');
+        $this->delete(route('admin.public-holidays.destroy', $pastHoliday))
+            ->assertSessionHasErrors('date');
+
+        $this->assertSame('2026-07-15', $currentHoliday->refresh()->date->toDateString());
+        $this->assertSame('2026-07-14', $pastHoliday->refresh()->date->toDateString());
+    }
+
+    public function test_future_public_holiday_suppresses_daily_work_and_restores_it_when_moved_or_removed(): void
+    {
+        $initialDate = CarbonImmutable::parse('2026-07-16', 'Asia/Kuala_Lumpur');
+        $movedDate = CarbonImmutable::parse('2026-07-17', 'Asia/Kuala_Lumpur');
+        $template = $this->dailyTemplate('Holiday-sensitive daily task');
+        $initialTask = app(ChecklistMaterializer::class)->forDate($initialDate)->sole();
+        $movedTask = app(ChecklistMaterializer::class)->forDate($movedDate)->sole();
+
+        DB::table('checklist_item_positions')->insert([
+            'date' => $initialDate->toDateString(),
+            'task_session_id' => $initialTask->task_session_id,
+            'item_type' => 'daily',
+            'item_id' => $initialTask->id,
+            'position' => 1,
+            'created_at' => app(OperationalDate::class)->nowUtc(),
+            'updated_at' => app(OperationalDate::class)->nowUtc(),
+        ]);
+
+        $this->loginAdmin();
+        $this->post(route('admin.public-holidays.store'), [
+            'date' => $initialDate->toDateString(),
+            'name' => 'Office closure',
+        ])->assertRedirect(route('admin.index'));
+
+        $holiday = PublicHoliday::query()->whereDate('date', $initialDate->toDateString())->sole();
+        $this->assertDatabaseMissing('daily_checklists', ['id' => $initialTask->id]);
+        $this->assertDatabaseMissing('checklist_item_positions', ['item_type' => 'daily', 'item_id' => $initialTask->id]);
+        $this->assertCount(0, app(ChecklistWorkflow::class)->forDate($initialDate)['daily']);
+
+        $this->patch(route('admin.public-holidays.update', $holiday), [
+            'date' => $movedDate->toDateString(),
+            'name' => 'Rescheduled closure',
+        ])->assertRedirect(route('admin.index'));
+
+        $this->assertTrue(app(ChecklistMaterializer::class)
+            ->forDate($initialDate)
+            ->contains('task_template_id', $template->id));
+        $this->assertDatabaseMissing('daily_checklists', ['id' => $movedTask->id]);
+        $this->assertCount(0, app(ChecklistWorkflow::class)->forDate($movedDate)['daily']);
+
+        $this->delete(route('admin.public-holidays.destroy', $holiday))
+            ->assertRedirect(route('admin.index'));
+
+        $this->assertTrue(app(ChecklistMaterializer::class)
+            ->forDate($movedDate)
+            ->contains('task_template_id', $template->id));
+    }
+
+    public function test_public_holidays_deny_stale_direct_task_completion_and_reordering(): void
+    {
+        Storage::fake('local');
+        $this->fakeWatermarker();
+        $task = $this->dailyTask('Stale holiday task');
+        $date = $task->date->toDateString();
+        PublicHoliday::query()->create([
+            'date' => $date,
+            'name' => 'Existing office closure',
+        ]);
+
+        $this->post(route('tasks.daily.complete', $task), [
+            'date' => $date,
+            'photos' => [$this->proof()],
+        ]);
+
+        $this->assertFalse($task->refresh()->is_completed);
+
+        $this->post(route('checklist.order'), [
+            'date' => $date,
+            'task_session_id' => $task->task_session_id,
+            'items' => [['type' => 'daily', 'id' => $task->id]],
+        ]);
+
+        $this->assertDatabaseMissing('checklist_item_positions', [
+            'item_type' => 'daily',
+            'item_id' => $task->id,
+        ]);
+    }
+
+    public function test_public_holidays_postpone_weekly_work_across_weekend_and_keep_it_orderable_and_completable(): void
+    {
+        Storage::fake('local');
+        $this->fakeWatermarker();
+        $template = $this->weeklyTemplate('Weekly closure carry-over', dueWeekday: CarbonImmutable::FRIDAY);
+        $scheduler = app(WeeklyTaskScheduler::class);
+        $scheduler->materializeWeek(app(OperationalDate::class)->today());
+        $occurrence = WeeklyTaskOccurrence::query()
+            ->where('weekly_task_template_id', $template->id)
+            ->sole();
+
+        $this->loginAdmin();
+        $this->post(route('admin.public-holidays.store'), [
+            'date' => '2026-07-17',
+            'name' => 'Friday closure',
+        ])->assertRedirect(route('admin.index'));
+        $this->post(route('admin.public-holidays.store'), [
+            'date' => '2026-07-20',
+            'name' => 'Monday closure',
+        ])->assertRedirect(route('admin.index'));
+
+        $occurrence->refresh();
+        $this->assertSame('2026-07-17', $occurrence->original_due_date->toDateString());
+        $this->assertSame('2026-07-21', $occurrence->scheduled_date->toDateString());
+        $this->assertSame('pending', $occurrence->status);
+        $this->assertCount(0, app(ChecklistWorkflow::class)
+            ->forDate(CarbonImmutable::parse('2026-07-17', 'Asia/Kuala_Lumpur'))['weekly']);
+        $this->assertCount(0, app(ChecklistWorkflow::class)
+            ->forDate(CarbonImmutable::parse('2026-07-20', 'Asia/Kuala_Lumpur'))['weekly']);
+
+        CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-07-21 09:00:00.123456', 'Asia/Kuala_Lumpur'));
+        $date = app(OperationalDate::class)->today()->toDateString();
+        $items = app(ChecklistWorkflow::class)->forDate(app(OperationalDate::class)->today());
+        $currentWeekOccurrence = WeeklyTaskOccurrence::query()
+            ->where('weekly_task_template_id', $template->id)
+            ->whereDate('week_start', app(OperationalDate::class)->today()->startOfWeek()->toDateString())
+            ->sole();
+
+        $this->assertTrue($items['weekly']->contains('id', $occurrence->id));
+        $this->assertTrue($items['weekly']->contains('id', $currentWeekOccurrence->id));
+
+        $this->post(route('checklist.order'), [
+            'date' => $date,
+            'task_session_id' => $occurrence->task_session_id,
+            'items' => [
+                ['type' => 'weekly', 'id' => $occurrence->id],
+                ['type' => 'weekly', 'id' => $currentWeekOccurrence->id],
+            ],
+        ])->assertRedirect(route('checklist.index', ['date' => $date]));
+
+        $this->assertTrue(DB::table('checklist_item_positions')
+            ->whereDate('date', $date)
+            ->where('item_type', 'weekly')
+            ->where('item_id', $occurrence->id)
+            ->where('position', 1)
+            ->exists());
+
+        $this->post(route('tasks.weekly.complete', $occurrence), [
+            'date' => $date,
+            'photos' => [$this->proof()],
+        ])->assertRedirect(route('checklist.index', ['date' => $date]));
+
+        $this->assertSame('completed', $occurrence->refresh()->status);
+        $this->assertSame($date, $occurrence->completed_on->toDateString());
     }
 
     public function test_rotations_and_checklists_share_the_server_resolved_sunday_cycle(): void
@@ -740,6 +999,47 @@ class ChecklistWorkflowTest extends TestCase
             '2026-07-14', '2026-07-15', '2026-07-16', '2026-07-17',
             '2026-07-20',
         ], array_column($stats['trend'], 'date'));
+    }
+
+    public function test_statistics_overview_and_trend_exclude_custom_public_holidays(): void
+    {
+        CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-07-20 09:00:00.123456', 'Asia/Kuala_Lumpur'));
+        $today = app(OperationalDate::class)->today();
+        DB::table('statistics_tracking')->update(['started_on' => '2026-07-16']);
+
+        $normal = $this->dailyTask('Normal completed task', '2026-07-16');
+        $holidayTask = $this->dailyTask('Completed task on office closure', '2026-07-17');
+        $this->dailyTask('Current pending task', $today->toDateString());
+        $normal->forceFill(['is_completed' => true, 'completed_at' => $today->subDays(4)->setTimezone('UTC')])->save();
+        $holidayTask->forceFill(['is_completed' => true, 'completed_at' => $today->subDays(3)->setTimezone('UTC')])->save();
+        PublicHoliday::query()->create([
+            'date' => '2026-07-17',
+            'name' => 'Historical office closure',
+        ]);
+        DB::table('checklist_materializations')->insertOrIgnore([
+            ['date' => '2026-07-16'],
+            ['date' => '2026-07-17'],
+            ['date' => '2026-07-18'],
+            ['date' => '2026-07-19'],
+            ['date' => $today->toDateString()],
+        ]);
+
+        $stats = app(StatisticsService::class)->build(
+            CarbonImmutable::parse('2026-07-16', 'Asia/Kuala_Lumpur'),
+            $today,
+        );
+
+        $this->assertSame(1, $stats['overview']['completed']);
+        $this->assertSame(1, $stats['overview']['pending']);
+        $this->assertSame(2, $stats['overview']['totalTasks']);
+        $this->assertSame([
+            '2026-07-16',
+            '2026-07-20',
+        ], array_column($stats['trend'], 'date'));
+        $this->assertSame(0, count(array_filter(
+            $stats['trend'],
+            static fn (array $row): bool => $row['date'] === '2026-07-17',
+        )));
     }
 
     public function test_admin_endpoints_require_master_session_and_cleaner_page_is_anonymous(): void
