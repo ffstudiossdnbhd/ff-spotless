@@ -213,6 +213,11 @@ let themeTransitionTimer;
 let noticeDismissTimer;
 const statsFrom = ref('');
 const statsTo = ref('');
+const expandedHistoryDescriptions = ref({});
+
+function toggleHistoryDescription(key) {
+    expandedHistoryDescriptions.value[key] = !expandedHistoryDescriptions.value[key];
+}
 
 const taskForm = ref({
     task_type: 'daily',
@@ -1562,23 +1567,39 @@ function chooseAdminDate(date) {
                                 <h2 class="font-black uppercase" :class="sessionTone(index)">{{ session.name }}</h2>
                                 <span class="rounded-full border border-zinc-700 px-2.5 py-1 text-xs font-bold text-zinc-400">{{ historyFor(session.id).length }} record{{ historyFor(session.id).length === 1 ? '' : 's' }}</span>
                             </header>
-                            <div class="grid items-start gap-2 md:grid-cols-2">
-                                <article v-for="entry in historyFor(session.id)" :key="entry.key" class="rounded-xl border bg-zinc-900 p-4 transition duration-150" :class="entry.evidence?.length ? 'border-zinc-700 hover:-translate-y-0.5 hover:border-sky-400/70 hover:bg-sky-400/5 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-sky-400' : 'border-zinc-700 opacity-75'">
-                                    <button class="w-full text-left disabled:cursor-default" :class="entry.evidence?.length ? 'cursor-pointer' : ''" :disabled="!entry.evidence?.length" @click="viewingEvidence = entry">
-                                        <div class="flex items-start justify-between gap-3">
-                                            <strong class="min-w-0 flex-1 text-sm">{{ entry.text }}</strong>
-                                            <span class="shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-xs font-black uppercase" :class="entry.status === 'completed' ? 'bg-emerald-500/10 text-emerald-300' : entry.status === 'missed' ? 'bg-rose-500/10 text-rose-300' : 'bg-zinc-800 text-zinc-400'">{{ entry.status === 'completed' ? 'Completed' : entry.status === 'missed' ? 'Missed' : 'Pending' }}</span>
+                            <div class="grid gap-3 md:grid-cols-2">
+                                <article v-for="entry in historyFor(session.id)" :key="entry.key" class="flex h-full min-h-[140px] flex-col rounded-xl border bg-zinc-900 p-4 transition duration-150" :class="entry.evidence?.length ? 'border-zinc-700 hover:-translate-y-0.5 hover:border-sky-400/70 hover:bg-sky-400/5 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-sky-400' : 'border-zinc-700 opacity-75'">
+                                    <button class="flex h-full w-full flex-1 flex-col justify-between text-left disabled:cursor-default" :class="entry.evidence?.length ? 'cursor-pointer' : ''" :disabled="!entry.evidence?.length" @click="viewingEvidence = entry">
+                                        <div class="w-full">
+                                            <div class="flex items-start justify-between gap-3">
+                                                <strong class="min-w-0 flex-1 text-sm text-zinc-100">{{ entry.text }}</strong>
+                                                <span class="shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-black uppercase" :class="entry.status === 'completed' ? 'bg-emerald-500/10 text-emerald-300' : entry.status === 'missed' ? 'bg-rose-500/10 text-rose-300' : 'bg-zinc-800 text-zinc-400'">{{ entry.status === 'completed' ? 'Completed' : entry.status === 'missed' ? 'Missed' : 'Pending' }}</span>
+                                            </div>
+                                            <div class="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-zinc-400">
+                                                <span v-if="entry.timeSpanFormatted || entry.timeSpan" class="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300">{{ entry.timeSpanFormatted || entry.timeSpan }}</span>
+                                                <span v-if="entry.type === 'monthly'" class="text-purple-300">Monthly</span>
+                                                <span v-else-if="entry.type === 'weekly'" class="text-sky-300">Weekly (due {{ displayAdminDate(entry.originalDueDate) }})</span>
+                                                <span v-else class="text-zinc-400">Daily</span>
+                                            </div>
+                                            <div v-if="entry.description" class="mt-2 text-xs text-zinc-400">
+                                                <p :class="expandedHistoryDescriptions[entry.key] ? '' : 'line-clamp-1'">{{ entry.description }}</p>
+                                                <span
+                                                    role="button"
+                                                    tabindex="0"
+                                                    class="mt-1 inline-block cursor-pointer font-bold text-rose-400 hover:underline"
+                                                    @click.stop="toggleHistoryDescription(entry.key)"
+                                                    @keydown.enter.stop="toggleHistoryDescription(entry.key)"
+                                                    @keydown.space.stop.prevent="toggleHistoryDescription(entry.key)"
+                                                >
+                                                    {{ expandedHistoryDescriptions[entry.key] ? 'less' : '...more' }}
+                                                </span>
+                                            </div>
                                         </div>
-                                        <div class="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-zinc-400">
-                                            <span class="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300">{{ entry.timeSpanFormatted }}</span>
-                                            <span v-if="entry.type === 'monthly'" class="text-purple-300">Monthly</span>
-                                            <span v-else-if="entry.type === 'weekly'" class="text-sky-300">Weekly (due {{ displayAdminDate(entry.originalDueDate) }})</span>
-                                            <span v-else class="text-zinc-400">Daily</span>
+                                        <div class="mt-3 border-t border-zinc-800/80 pt-2 text-xs">
+                                            <p v-if="entry.isCompleted" class="text-zinc-500">{{ formatTimestamp(entry.completedAt) }} - {{ entry.evidence.length }} photo{{ entry.evidence.length === 1 ? '' : 's' }}</p>
+                                            <p v-if="entry.completionNote" class="mt-1 text-zinc-300 font-medium">Note: {{ entry.completionNote }}</p>
+                                            <p v-if="entry.evidence?.length" class="mt-2 inline-flex items-center gap-1 font-bold text-sky-300">View proof photo{{ entry.evidence.length === 1 ? '' : 's' }} <span aria-hidden="true">-&gt;</span></p>
                                         </div>
-                                        <p v-if="entry.description" class="mt-1 text-xs text-zinc-400">{{ entry.description }}</p>
-                                        <p v-if="entry.isCompleted" class="mt-1 text-xs text-zinc-500">{{ formatTimestamp(entry.completedAt) }} - {{ entry.evidence.length }} photo{{ entry.evidence.length === 1 ? '' : 's' }}</p>
-                                        <p v-if="entry.completionNote" class="mt-2 text-xs text-zinc-300">Note: {{ entry.completionNote }}</p>
-                                        <p v-if="entry.evidence?.length" class="mt-3 inline-flex items-center gap-1 text-xs font-bold text-sky-300">View proof photo{{ entry.evidence.length === 1 ? '' : 's' }} <span aria-hidden="true">-&gt;</span></p>
                                     </button>
                                 </article>
                             </div>
