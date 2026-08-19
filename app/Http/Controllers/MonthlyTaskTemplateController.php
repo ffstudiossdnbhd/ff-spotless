@@ -2,22 +2,22 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Requests\StoreWeeklyTaskTemplateRequest;
-use App\Http\Requests\UpdateWeeklyTaskTemplateRequest;
+use App\Http\Requests\StoreMonthlyTaskTemplateRequest;
+use App\Http\Requests\UpdateMonthlyTaskTemplateRequest;
+use App\Models\MonthlyTaskTemplate;
 use App\Models\TaskSession;
-use App\Models\WeeklyTaskTemplate;
 use App\Services\ChecklistMaterializer;
 use App\Services\AuditLogger;
+use App\Services\MonthlyTaskScheduler;
 use App\Services\OperationalDate;
-use App\Services\WeeklyTaskScheduler;
 use Illuminate\Validation\ValidationException;
 
-class WeeklyTaskTemplateController extends Controller
+class MonthlyTaskTemplateController extends Controller
 {
     public function store(
-        StoreWeeklyTaskTemplateRequest $request,
+        StoreMonthlyTaskTemplateRequest $request,
         ChecklistMaterializer $daily,
-        WeeklyTaskScheduler $scheduler,
+        MonthlyTaskScheduler $scheduler,
         OperationalDate $dates,
         AuditLogger $audits,
     ) {
@@ -31,42 +31,38 @@ class WeeklyTaskTemplateController extends Controller
         }
 
         $today = $dates->today();
-        $startsOn = $data['due_weekday'] >= $today->dayOfWeekIso
-            ? $today->startOfWeek()
-            : $today->addWeek()->startOfWeek();
+        $startsOn = $today->startOfMonth();
 
         $collectionIds = $data['applies_to_all_collections'] ? [] : array_values(array_unique($data['task_collection_ids'] ?? []));
 
-        $template = WeeklyTaskTemplate::query()->create([
+        $template = MonthlyTaskTemplate::query()->create([
             'task_name' => $data['task_name'],
             'description' => $data['description'] ?? null,
             'task_session_id' => $data['task_session_id'],
             'task_collection_id' => $collectionIds[0] ?? null,
             'applies_to_all_collections' => $data['applies_to_all_collections'],
-            'due_weekday' => $data['due_weekday'],
             'finish_time' => $data['finish_time'],
-            'sort_order' => (int) WeeklyTaskTemplate::query()->max('sort_order') + 1,
+            'sort_order' => (int) MonthlyTaskTemplate::query()->max('sort_order') + 1,
             'starts_on' => $startsOn->toDateString(),
             'is_active' => true,
         ]);
         $template->taskCollections()->sync($collectionIds);
 
-        $scheduler->materializeWeek($startsOn, true);
-        $scheduler->refreshMaterializedWeeksFrom($startsOn);
+        $scheduler->materializeMonth($startsOn, true);
+        $scheduler->refreshMaterializedMonthsFrom($startsOn);
         $audits->admin('task_template.created', $template, [
-            'task_type' => 'weekly',
+            'task_type' => 'monthly',
             'task_name' => $template->task_name,
-            'due_weekday' => $template->due_weekday,
         ]);
 
         return to_route('admin.index');
     }
 
     public function update(
-        UpdateWeeklyTaskTemplateRequest $request,
-        WeeklyTaskTemplate $weeklyTaskTemplate,
+        UpdateMonthlyTaskTemplateRequest $request,
+        MonthlyTaskTemplate $monthlyTaskTemplate,
         ChecklistMaterializer $daily,
-        WeeklyTaskScheduler $scheduler,
+        MonthlyTaskScheduler $scheduler,
         OperationalDate $dates,
         AuditLogger $audits,
     ) {
@@ -74,45 +70,43 @@ class WeeklyTaskTemplateController extends Controller
         $daily->catchUpThrough($dates->today());
         $scheduler->advanceThrough($dates->today());
 
-        if (! $weeklyTaskTemplate->is_active || ! TaskSession::query()->active()->whereKey($data['task_session_id'])->exists()) {
-            throw ValidationException::withMessages(['task' => 'Weekly template or session is not active.']);
+        if (! $monthlyTaskTemplate->is_active || ! TaskSession::query()->active()->whereKey($data['task_session_id'])->exists()) {
+            throw ValidationException::withMessages(['task' => 'Monthly template or session is not active.']);
         }
 
         $collectionIds = $data['applies_to_all_collections'] ? [] : array_values(array_unique($data['task_collection_ids'] ?? []));
 
-        $weeklyTaskTemplate->forceFill([
+        $monthlyTaskTemplate->forceFill([
             'task_name' => $data['task_name'],
             'description' => $data['description'] ?? null,
             'task_session_id' => $data['task_session_id'],
             'task_collection_id' => $collectionIds[0] ?? null,
             'applies_to_all_collections' => $data['applies_to_all_collections'],
-            'due_weekday' => $data['due_weekday'],
             'finish_time' => $data['finish_time'],
         ])->save();
-        $weeklyTaskTemplate->taskCollections()->sync($collectionIds);
-        $scheduler->updateTemplateSnapshots($weeklyTaskTemplate);
-        $audits->admin('task_template.updated', $weeklyTaskTemplate, [
-            'task_type' => 'weekly',
+        $monthlyTaskTemplate->taskCollections()->sync($collectionIds);
+        $scheduler->updateTemplateSnapshots($monthlyTaskTemplate);
+        $audits->admin('task_template.updated', $monthlyTaskTemplate, [
+            'task_type' => 'monthly',
             'task_name' => $data['task_name'],
-            'due_weekday' => $data['due_weekday'],
         ]);
 
         return to_route('admin.index');
     }
 
     public function destroy(
-        WeeklyTaskTemplate $weeklyTaskTemplate,
+        MonthlyTaskTemplate $monthlyTaskTemplate,
         ChecklistMaterializer $daily,
-        WeeklyTaskScheduler $scheduler,
+        MonthlyTaskScheduler $scheduler,
         OperationalDate $dates,
         AuditLogger $audits,
     ) {
         $daily->catchUpThrough($dates->today());
         $scheduler->advanceThrough($dates->today());
-        $scheduler->deactivateTemplate($weeklyTaskTemplate);
-        $audits->admin('task_template.archived', $weeklyTaskTemplate, [
-            'task_type' => 'weekly',
-            'task_name' => $weeklyTaskTemplate->task_name,
+        $scheduler->deactivateTemplate($monthlyTaskTemplate);
+        $audits->admin('task_template.archived', $monthlyTaskTemplate, [
+            'task_type' => 'monthly',
+            'task_name' => $monthlyTaskTemplate->task_name,
         ]);
 
         return to_route('admin.index');

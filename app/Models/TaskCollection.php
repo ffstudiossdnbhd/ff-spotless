@@ -35,4 +35,9 @@ class TaskCollection extends Model
     {
         return $this->hasMany(WeeklyTaskTemplate::class);
     }
+
+    public function monthlyTemplates(): HasMany
+    {
+        return $this->hasMany(MonthlyTaskTemplate::class);
+    }
 }

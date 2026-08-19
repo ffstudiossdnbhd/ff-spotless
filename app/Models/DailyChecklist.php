@@ -22,9 +22,10 @@ class DailyChecklist extends Model
         'date',
         'task_template_id',
         'task_name',
+        'description',
         'task_session_id',
         'session_name',
-        'credit_hours',
+        'finish_time',
         'is_completed',
         'completed_at',
         'completion_note',
@@ -39,7 +40,6 @@ class DailyChecklist extends Model
         return [
             'date' => 'immutable_date',
             'task_session_id' => 'integer',
-            'credit_hours' => 'decimal:2',
             'is_completed' => 'boolean',
             'completed_at' => 'immutable_datetime',
         ];

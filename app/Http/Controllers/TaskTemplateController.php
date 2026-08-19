@@ -37,10 +37,11 @@ class TaskTemplateController extends Controller
             $collectionIds = $data['applies_to_all_collections'] ? [] : array_values(array_unique($data['task_collection_ids'] ?? []));
             $template = TaskTemplate::query()->create([
                 'task_name' => $data['task_name'],
+                'description' => $data['description'] ?? null,
                 'task_session_id' => $data['task_session_id'],
                 'task_collection_id' => $collectionIds[0] ?? null,
                 'applies_to_all_collections' => $data['applies_to_all_collections'],
-                'credit_hours' => $data['credit_hours'],
+                'finish_time' => $data['finish_time'],
                 'sort_order' => (int) TaskTemplate::query()->max('sort_order') + 1,
                 'is_active' => true,
             ]);
@@ -86,10 +87,11 @@ class TaskTemplateController extends Controller
 
             $lockedTemplate->forceFill([
                 'task_name' => $data['task_name'],
+                'description' => $data['description'] ?? null,
                 'task_session_id' => $data['task_session_id'],
                 'task_collection_id' => $collectionIds[0] ?? null,
                 'applies_to_all_collections' => $data['applies_to_all_collections'],
-                'credit_hours' => $data['credit_hours'],
+                'finish_time' => $data['finish_time'],
             ])->save();
 
             $lockedTemplate->taskCollections()->sync($collectionIds);

@@ -3,9 +3,10 @@
 namespace App\Services;
 
 use App\Models\ChecklistDayStatus;
-use App\Models\ChecklistItemPosition;
 use App\Models\DailyChecklist;
 use App\Models\AuditLog;
+use App\Models\MonthlyTaskOccurrence;
+use App\Models\MonthlyTaskTemplate;
 use App\Models\PublicHoliday;
 use App\Models\TaskCollection;
 use App\Models\TaskCollectionSchedule;
@@ -36,7 +37,7 @@ class DashboardPresenter
     }
 
     /**
-     * @param  array{daily: Collection<int, DailyChecklist>, weekly: Collection<int, WeeklyTaskOccurrence>}  $checklist
+     * @param  array{daily: Collection<int, DailyChecklist>, weekly: Collection<int, WeeklyTaskOccurrence>, monthly?: Collection<int, MonthlyTaskOccurrence>}  $checklist
      */
     public function checklist(Request $request, CarbonImmutable $date, array $checklist): array
     {
@@ -46,14 +47,16 @@ class DashboardPresenter
     /**
      * @param  Collection<int, TaskTemplate>  $templates
      * @param  Collection<int, WeeklyTaskTemplate>  $weeklyTemplates
+     * @param  Collection<int, MonthlyTaskTemplate>  $monthlyTemplates
      * @param  Collection<int, PublicHoliday>  $publicHolidays
-     * @param  array{daily: Collection<int, DailyChecklist>, weekly: Collection<int, WeeklyTaskOccurrence>}  $checklist
+     * @param  array{daily: Collection<int, DailyChecklist>, weekly: Collection<int, WeeklyTaskOccurrence>, monthly?: Collection<int, MonthlyTaskOccurrence>}  $checklist
      */
     public function admin(
         Request $request,
         CarbonImmutable $date,
         Collection $templates,
         Collection $weeklyTemplates,
+        Collection $monthlyTemplates,
         Collection $collections,
         Collection $collectionSchedules,
         Collection $publicHolidays,
@@ -62,36 +65,19 @@ class DashboardPresenter
         CarbonImmutable $rotationCalendarMonth,
     ): array {
         $props = $this->base($request, 'admin', $date, []);
-        $props['templates'] = $templates->map(static fn (TaskTemplate $template): array => [
-            'id' => $template->id,
-            'taskName' => $template->task_name,
-            'type' => 'daily',
-            'sessionId' => $template->task_session_id,
-            'sessionName' => $template->taskSession->name,
-            'appliesToAllCollections' => $template->applies_to_all_collections,
-            'collectionIds' => $template->taskCollections->pluck('id')->values()->all(),
-            'collectionNames' => $template->taskCollections->pluck('name')->values()->all(),
-            'creditHours' => (float) $template->credit_hours,
-        ])->values()->all();
-        $props['weeklyTemplates'] = $weeklyTemplates->map(static fn (WeeklyTaskTemplate $template): array => [
-            'id' => $template->id,
-            'taskName' => $template->task_name,
-            'type' => 'weekly',
-            'sessionId' => $template->task_session_id,
-            'sessionName' => $template->taskSession->name,
-            'appliesToAllCollections' => $template->applies_to_all_collections,
-            'collectionIds' => $template->taskCollections->pluck('id')->values()->all(),
-            'collectionNames' => $template->taskCollections->pluck('name')->values()->all(),
-            'dueWeekday' => $template->due_weekday,
-            'creditHours' => (float) $template->credit_hours,
-            'startsOn' => $template->starts_on->toDateString(),
-        ])->values()->all();
+        $sessions = TaskSession::query()->orderBy('start_time')->get()->keyBy('id');
+
+        $props['templates'] = $this->enrichTemplatesWithTimes($templates, $sessions, 'daily');
+        $props['weeklyTemplates'] = $this->enrichTemplatesWithTimes($weeklyTemplates, $sessions, 'weekly');
+        $props['monthlyTemplates'] = $this->enrichTemplatesWithTimes($monthlyTemplates, $sessions, 'monthly');
+
         $props['collections'] = $collections->map(static fn (TaskCollection $collection): array => [
             'id' => $collection->id,
             'name' => $collection->name,
             'isDefault' => $collection->is_default,
             'rotationOrder' => $collection->rotation_order,
         ])->values()->all();
+
         $props['collectionSchedules'] = $collectionSchedules->map(static fn (TaskCollectionSchedule $schedule): array => [
             'id' => $schedule->id,
             'collectionId' => $schedule->task_collection_id,
@@ -99,6 +85,7 @@ class DashboardPresenter
             'startsOn' => $schedule->starts_on->toDateString(),
             'endsOn' => $schedule->ends_on->toDateString(),
         ])->values()->all();
+
         $props['publicHolidays'] = $publicHolidays->map(function (PublicHoliday $holiday): array {
             return [
                 'id' => $holiday->id,
@@ -107,6 +94,7 @@ class DashboardPresenter
                 'isEditable' => $holiday->date->toDateString() > $this->dates->today()->toDateString(),
             ];
         })->values()->all();
+
         $selectedHoliday = $publicHolidays->first(
             static fn (PublicHoliday $holiday): bool => $holiday->date->isSameDay($date),
         );
@@ -115,54 +103,48 @@ class DashboardPresenter
         $props['rotationCalendar'] = $this->rotationCalendar($rotationCalendarMonth);
         $props['auditLogs'] = $this->auditLogs();
         $props['statistics'] = $statistics;
-        $props['workload'] = $this->workload($templates, $weeklyTemplates);
 
         return $props;
     }
 
     /**
-     * @param  array{daily: Collection<int, DailyChecklist>, weekly: Collection<int, WeeklyTaskOccurrence>}  $checklist
+     * @param  array{daily: Collection<int, DailyChecklist>, weekly: Collection<int, WeeklyTaskOccurrence>, monthly?: Collection<int, MonthlyTaskOccurrence>}  $checklist
      * @return list<array<string, mixed>>
      */
     private function taskItems(CarbonImmutable $date, array $checklist): array
     {
-        $positions = ChecklistItemPosition::query()
-            ->whereDate('date', $date->toDateString())
-            ->get()
-            ->keyBy(static fn (ChecklistItemPosition $position): string => $position->item_type.':'.$position->item_id);
+        $sessions = TaskSession::query()->orderBy('start_time')->get()->keyBy('id');
 
-        $daily = $checklist['daily']->map(function (DailyChecklist $task) use ($positions): array {
-            $key = 'daily:'.$task->id;
-
+        $daily = $checklist['daily']->map(function (DailyChecklist $task): array {
             return [
-                'key' => $key,
+                'key' => 'daily:'.$task->id,
                 'type' => 'daily',
                 'id' => $task->id,
                 'text' => $task->task_name,
+                'description' => $task->description,
                 'sessionId' => $task->task_session_id,
                 'sessionName' => $task->session_name,
-                'creditHours' => (float) $task->credit_hours,
-                'position' => $positions->get($key)?->position ?? 100000 + $task->id,
+                'finishTime' => $this->formatTime($task->finish_time),
                 'completed' => $task->is_completed,
                 'isWeekly' => false,
+                'isMonthly' => false,
                 'evidenceCount' => $task->evidence_count ?? 0,
             ];
         });
 
-        $weekly = $checklist['weekly']->map(function (WeeklyTaskOccurrence $task) use ($positions): array {
-            $key = 'weekly:'.$task->id;
-
+        $weekly = $checklist['weekly']->map(function (WeeklyTaskOccurrence $task): array {
             return [
-                'key' => $key,
+                'key' => 'weekly:'.$task->id,
                 'type' => 'weekly',
                 'id' => $task->id,
                 'text' => $task->task_name,
+                'description' => $task->description,
                 'sessionId' => $task->task_session_id,
                 'sessionName' => $task->session_name,
-                'creditHours' => (float) $task->credit_hours,
-                'position' => $positions->get($key)?->position ?? 200000 + $task->id,
+                'finishTime' => $this->formatTime($task->finish_time),
                 'completed' => $task->status === 'completed',
                 'isWeekly' => true,
+                'isMonthly' => false,
                 'status' => $task->status,
                 'originalDueDate' => $task->original_due_date->toDateString(),
                 'scheduledDate' => $task->scheduled_date->toDateString(),
@@ -171,11 +153,111 @@ class DashboardPresenter
             ];
         });
 
-        return $daily->concat($weekly)->sortBy('position')->values()->all();
+        $monthly = ($checklist['monthly'] ?? collect())->map(function (MonthlyTaskOccurrence $task): array {
+            return [
+                'key' => 'monthly:'.$task->id,
+                'type' => 'monthly',
+                'id' => $task->id,
+                'text' => $task->task_name,
+                'description' => $task->description,
+                'sessionId' => $task->task_session_id,
+                'sessionName' => $task->session_name,
+                'finishTime' => $this->formatTime($task->finish_time),
+                'completed' => $task->status === 'completed',
+                'isWeekly' => false,
+                'isMonthly' => true,
+                'status' => $task->status,
+                'originalDueDate' => $task->original_due_date->toDateString(),
+                'scheduledDate' => $task->scheduled_date->toDateString(),
+                'postponedCount' => $task->postponements_count ?? 0,
+                'evidenceCount' => $task->evidence_count ?? 0,
+            ];
+        });
+
+        $allTasks = $daily->concat($weekly)->concat($monthly);
+
+        // Group by session and compute dynamic start times
+        $result = [];
+        $grouped = $allTasks->groupBy('sessionId');
+
+        foreach ($sessions as $sessionId => $session) {
+            $sessionTasks = $grouped->get($sessionId, collect())
+                ->sortBy(static fn (array $item): string => $item['finishTime'].':'.$item['id'])
+                ->values();
+
+            $prevFinish = $this->formatTime($session->start_time);
+
+            foreach ($sessionTasks as $task) {
+                $startTime = $prevFinish;
+                $finishTime = $task['finishTime'];
+                $startTimeFormatted = $this->formatHumanTime($startTime);
+                $finishTimeFormatted = $this->formatHumanTime($finishTime);
+
+                $task['startTime'] = $startTime;
+                $task['startTimeFormatted'] = $startTimeFormatted;
+                $task['finishTimeFormatted'] = $finishTimeFormatted;
+                $task['timeSpan'] = "{$startTimeFormatted} - {$finishTimeFormatted}";
+
+                $prevFinish = $finishTime;
+                $result[] = $task;
+            }
+        }
+
+        return $result;
+    }
+
+    private function enrichTemplatesWithTimes(Collection $templates, \Illuminate\Support\Collection $sessions, string $type): array
+    {
+        $grouped = $templates->groupBy('task_session_id');
+        $result = [];
+
+        foreach ($sessions as $sessionId => $session) {
+            $sessionTemplates = $grouped->get($sessionId, collect())
+                ->sortBy(static fn ($template): string => (string) $template->finish_time.':'.$template->id)
+                ->values();
+
+            $prevFinish = $this->formatTime($session->start_time);
+
+            foreach ($sessionTemplates as $template) {
+                $finishTime = $this->formatTime($template->finish_time);
+                $startTime = $prevFinish;
+                $startTimeFormatted = $this->formatHumanTime($startTime);
+                $finishTimeFormatted = $this->formatHumanTime($finishTime);
+
+                $item = [
+                    'id' => $template->id,
+                    'taskName' => $template->task_name,
+                    'description' => $template->description,
+                    'type' => $type,
+                    'sessionId' => $template->task_session_id,
+                    'sessionName' => $template->taskSession?->name ?? $session->name,
+                    'startTime' => $startTime,
+                    'finishTime' => $finishTime,
+                    'startTimeFormatted' => $startTimeFormatted,
+                    'finishTimeFormatted' => $finishTimeFormatted,
+                    'timeSpan' => "{$startTimeFormatted} - {$finishTimeFormatted}",
+                    'appliesToAllCollections' => $template->applies_to_all_collections,
+                    'collectionIds' => $template->taskCollections->pluck('id')->values()->all(),
+                    'collectionNames' => $template->taskCollections->pluck('name')->values()->all(),
+                ];
+
+                if ($type === 'weekly') {
+                    $item['dueWeekday'] = $template->due_weekday;
+                    $item['startsOn'] = $template->starts_on->toDateString();
+                } elseif ($type === 'monthly') {
+                    $item['startsOn'] = $template->starts_on->toDateString();
+                }
+
+                $prevFinish = $finishTime;
+                $result[] = $item;
+            }
+        }
+
+        return $result;
     }
 
     /**
-     * @param  array{daily: Collection<int, DailyChecklist>, weekly: Collection<int, WeeklyTaskOccurrence>}  $checklist
+     * @param  array{daily: Collection<int, DailyChecklist>, weekly: Collection<int, WeeklyTaskOccurrence>, monthly?: Collection<int, MonthlyTaskOccurrence>}  $checklist
      * @return list<array<string, mixed>>
      */
     private function historyItems(CarbonImmutable $date, array $checklist): array
@@ -188,9 +270,10 @@ class DashboardPresenter
                     'id' => $task->id,
                     'date' => $task->date->toDateString(),
                     'text' => $task->task_name,
+                    'description' => $task->description,
                     'sessionId' => $task->task_session_id,
                     'sessionName' => $task->session_name,
-                    'creditHours' => (float) $task->credit_hours,
+                    'finishTime' => $this->formatTime($task->finish_time),
                     'status' => $task->is_completed ? 'completed' : ($task->date->lessThan($this->dates->today()) ? 'missed' : 'pending'),
                     'isCompleted' => $task->is_completed,
                     'completedAt' => $this->localTimestamp($task->completed_at),
@@ -204,7 +287,7 @@ class DashboardPresenter
                 ];
             });
 
-        $weekly = $checklist['weekly']->loadMissing(['evidence', 'postponements'])
+        $weekly = $checklist['weekly']->loadMissing(['evidence', 'completedBy:id,name,username', 'postponements'])
             ->map(function (WeeklyTaskOccurrence $task) use ($date): array {
                 return [
                     'key' => 'weekly:'.$task->id,
@@ -212,14 +295,16 @@ class DashboardPresenter
                     'id' => $task->id,
                     'date' => $date->toDateString(),
                     'text' => $task->task_name,
+                    'description' => $task->description,
                     'sessionId' => $task->task_session_id,
                     'sessionName' => $task->session_name,
-                    'creditHours' => (float) $task->credit_hours,
+                    'finishTime' => $this->formatTime($task->finish_time),
                     'status' => $task->status,
                     'missedReason' => $task->missed_reason,
                     'isCompleted' => $task->status === 'completed',
                     'completedAt' => $this->localTimestamp($task->completed_at),
                     'completionNote' => $task->completion_note,
+                    'completedBy' => $task->completedBy?->only(['id', 'name', 'username']),
                     'originalDueDate' => $task->original_due_date->toDateString(),
                     'scheduledDate' => $task->scheduled_date->toDateString(),
                     'canReopen' => $task->status === 'completed'
@@ -236,7 +321,69 @@ class DashboardPresenter
                 ];
             });
 
-        return $daily->concat($weekly)->values()->all();
+        $monthly = ($checklist['monthly'] ?? collect())->loadMissing(['evidence', 'completedBy:id,name,username', 'postponements'])
+            ->map(function (MonthlyTaskOccurrence $task) use ($date): array {
+                return [
+                    'key' => 'monthly:'.$task->id,
+                    'type' => 'monthly',
+                    'id' => $task->id,
+                    'date' => $date->toDateString(),
+                    'text' => $task->task_name,
+                    'description' => $task->description,
+                    'sessionId' => $task->task_session_id,
+                    'sessionName' => $task->session_name,
+                    'finishTime' => $this->formatTime($task->finish_time),
+                    'status' => $task->status,
+                    'missedReason' => $task->missed_reason,
+                    'isCompleted' => $task->status === 'completed',
+                    'completedAt' => $this->localTimestamp($task->completed_at),
+                    'completionNote' => $task->completion_note,
+                    'completedBy' => $task->completedBy?->only(['id', 'name', 'username']),
+                    'originalDueDate' => $task->original_due_date->toDateString(),
+                    'scheduledDate' => $task->scheduled_date->toDateString(),
+                    'canReopen' => $task->status === 'completed'
+                        && $task->month_start->isSameMonth($this->dates->today()),
+                    'postponements' => $task->postponements->map(static fn ($postponement): array => [
+                        'from' => $postponement->from_date->toDateString(),
+                        'to' => $postponement->to_date->toDateString(),
+                        'reason' => $postponement->reason,
+                    ])->values()->all(),
+                    'evidence' => $task->evidence->map(static fn ($evidence): array => [
+                        'id' => $evidence->id,
+                        'url' => route('admin.evidence.monthly', $evidence),
+                    ])->values()->all(),
+                ];
+            });
+
+        $allHistory = $daily->concat($weekly)->concat($monthly);
+        $sessions = TaskSession::query()->orderBy('start_time')->get()->keyBy('id');
+        $result = [];
+        $grouped = $allHistory->groupBy('sessionId');
+
+        foreach ($sessions as $sessionId => $session) {
+            $sessionTasks = $grouped->get($sessionId, collect())
+                ->sortBy(static fn (array $item): string => $item['finishTime'].':'.$item['id'])
+                ->values();
+
+            $prevFinish = $this->formatTime($session->start_time);
+
+            foreach ($sessionTasks as $task) {
+                $startTime = $prevFinish;
+                $finishTime = $task['finishTime'];
+                $startTimeFormatted = $this->formatHumanTime($startTime);
+                $finishTimeFormatted = $this->formatHumanTime($finishTime);
+
+                $task['startTime'] = $startTime;
+                $task['startTimeFormatted'] = $startTimeFormatted;
+                $task['finishTimeFormatted'] = $finishTimeFormatted;
+                $task['timeSpanFormatted'] = "{$startTimeFormatted} - {$finishTimeFormatted}";
+
+                $prevFinish = $finishTime;
+                $result[] = $task;
+            }
+        }
+
+        return $result;
     }
 
     /**
@@ -264,7 +411,7 @@ class DashboardPresenter
     {
         $user = $request->user();
         $sessions = Schema::hasTable('task_sessions')
-            ? TaskSession::query()->orderBy('sort_order')->get()
+            ? TaskSession::query()->orderBy('start_time')->get()
             : collect();
         $dateString = $date->toDateString();
 
@@ -274,9 +421,13 @@ class DashboardPresenter
                 'user' => $user instanceof User ? $user->only(['id', 'name', 'username']) : null,
                 'isAdmin' => $this->adminSession->isAuthenticated($request),
             ],
-            'sessions' => $sessions->map(static fn (TaskSession $session): array => [
+            'sessions' => $sessions->map(fn (TaskSession $session): array => [
                 'id' => $session->id,
                 'name' => $session->name,
+                'startTime' => $this->formatTime($session->start_time),
+                'endTime' => $this->formatTime($session->end_time),
+                'startTimeFormatted' => $this->formatHumanTime($session->start_time),
+                'endTimeFormatted' => $this->formatHumanTime($session->end_time),
                 'sortOrder' => $session->sort_order,
                 'isActive' => $session->is_active,
             ])->values()->all(),
@@ -292,6 +443,7 @@ class DashboardPresenter
             'uploadLimits' => $this->uploadLimits(),
             'templates' => [],
             'weeklyTemplates' => [],
+            'monthlyTemplates' => [],
             'collections' => [],
             'collectionSchedules' => [],
             'publicHolidays' => [],
@@ -299,7 +451,6 @@ class DashboardPresenter
             'rotationCalendar' => ['month' => null, 'weeks' => []],
             'auditLogs' => ['data' => [], 'links' => []],
             'statistics' => null,
-            'workload' => [],
         ];
     }
 
@@ -331,30 +482,6 @@ class DashboardPresenter
             'date' => $holiday->date->toDateString(),
             'name' => $holiday->name,
         ];
-    }
-
-    private function workload(Collection $templates, Collection $weeklyTemplates): array
-    {
-        $sessions = TaskSession::query()->active()->orderBy('sort_order')->get();
-        $rows = $sessions->map(function (TaskSession $session) use ($templates, $weeklyTemplates): array {
-            $dailyTemplates = $templates->where('task_session_id', $session->id);
-            $weeklySessionTemplates = $weeklyTemplates->where('task_session_id', $session->id);
-            $daily = $dailyTemplates->sum(fn ($task) => (float) $task->credit_hours);
-            $weekly = $weeklySessionTemplates->sum(fn ($task) => (float) $task->credit_hours);
-            return [
-                'sessionId' => $session->id,
-                'sessionName' => $session->name,
-                'dailyCredits' => round($daily, 2),
-                'weeklyCredits' => round($weekly, 2),
-                'expectedWeeklyCredits' => round(($daily * 5) + $weekly, 2),
-            ];
-        });
-        $average = $rows->avg('expectedWeeklyCredits') ?: 0;
-
-        return $rows->map(static fn (array $row): array => [
-            ...$row,
-            'isOverloaded' => $average > 0 && $row['expectedWeeklyCredits'] > $average * 1.2,
-        ])->values()->all();
     }
 
     /**
@@ -408,6 +535,28 @@ class DashboardPresenter
     private function localTimestamp($timestamp): ?string
     {
         return $timestamp?->setTimezone($this->dates->timezone())->format('Y-m-d\\TH:i:s.uP');
+    }
+
+    private function formatTime(?string $time): string
+    {
+        if (! $time) {
+            return '09:00:00';
+        }
+
+        return strlen($time) === 5 ? "{$time}:00" : substr($time, 0, 8);
+    }
+
+    private function formatHumanTime(?string $time): string
+    {
+        if (! $time) {
+            return '9:00 AM';
+        }
+
+        try {
+            return CarbonImmutable::parse($this->formatTime($time))->format('g:i A');
+        } catch (\Throwable) {
+            return $time;
+        }
     }
 
     /**

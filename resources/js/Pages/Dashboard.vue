@@ -1,7 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { router, usePage } from '@inertiajs/vue3';
-import Sortable from 'sortablejs';
 import SundayFirstDatePicker from '../Components/SundayFirstDatePicker.vue';
 
 const props = defineProps({
@@ -15,110 +14,111 @@ const props = defineProps({
     uploadLimits: { type: Object, default: () => ({ maxFiles: 5, maxFileMb: 10, maxFileBytes: 10 * 1024 * 1024, maxRequestMb: 55, maxRequestBytes: 55 * 1024 * 1024 }) },
     templates: { type: [Array, Object], default: () => [] },
     weeklyTemplates: { type: [Array, Object], default: () => [] },
+    monthlyTemplates: { type: [Array, Object], default: () => [] },
     collections: { type: [Array, Object], default: () => [] },
     collectionSchedules: { type: [Array, Object], default: () => [] },
     completedTasks: { type: [Array, Object], default: () => [] },
     auditLogs: { type: [Array, Object], default: () => ({ data: [], links: [] }) },
     rotationCalendar: { type: Object, default: () => ({ month: '', weeks: [] }) },
     statistics: { type: Object, default: null },
-    workload: { type: Array, default: () => [] },
     publicHolidays: { type: Array, default: () => [] },
     publicHoliday: { type: Object, default: null },
 });
 
 const page = usePage();
-const screen = ref(resolveScreen());
-const adminTab = ref('statistics');
-const selectedDate = ref(props.currentDate);
-const adminDate = ref(props.currentDate);
-const localTasks = ref([]);
-const theme = ref(typeof window !== 'undefined' ? (localStorage.getItem('ff-spotless-theme') || 'light') : 'light');
-const notice = ref('');
-const actionError = ref('');
-const formErrors = ref({});
-const busy = ref(false);
-const mobileNavOpen = ref(false);
-const confirmation = ref(null);
-const adminLogin = ref('');
-const evidenceTask = ref(null);
-const evidenceFiles = ref([]);
-const evidencePreviews = ref([]);
-const completionNote = ref('');
-const viewingEvidence = ref(null);
-const reopeningTask = ref(null);
-const reopenReason = ref('');
-const editing = ref(null);
-const sessionEditing = ref(null);
-const sortables = [];
-let themeTransitionTimer;
-let noticeDismissTimer;
-const statsFrom = ref('');
-const statsTo = ref('');
 
-const taskForm = ref({
-    task_type: 'daily',
-    task_name: '',
-    task_session_id: '',
-    collection_mode: 'single',
-    single_collection_id: '',
-    task_collection_ids: [],
-    due_weekday: 1,
-    credit_hours: 1,
-});
-const collectionForm = ref({ name: '' });
-const collectionScheduleForm = ref(defaultCollectionScheduleForm());
-const sessionForm = ref({ name: '' });
-const editForm = ref({});
-const publicHolidayForm = ref(defaultPublicHolidayForm());
-const publicHolidayEditing = ref(null);
-const publicHolidayEditForm = ref({});
-const taskListFilters = ref({
-    collection_id: 'all',
-    task_type: 'all',
-    search: '',
-});
-const adminTabs = [
-    { key: 'statistics', label: 'Dashboard', icon: 'dashboard' },
-    { key: 'history', label: 'View History', icon: 'history' },
-    { key: 'collections', label: 'Rotations', icon: 'rotations' },
-    { key: 'sessions', label: 'Work Sessions', icon: 'sessions' },
-    { key: 'tasks', label: 'Manage Tasks', icon: 'tasks' },
-    { key: 'public-holidays', label: 'Public Holiday Editor', icon: 'holiday' },
-    { key: 'audit', label: 'Audit Log', icon: 'audit' },
-];
-const adminTabGroups = [
-    adminTabs.slice(0, 2),
-    adminTabs.slice(2, 6),
-    adminTabs.slice(6),
-];
+// Pure Utility Functions
+function collectionItems(value) {
+    return Array.isArray(value) ? value : (value?.data ?? []);
+}
 
+function currentTodayString() {
+    return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Kuala_Lumpur', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+}
+
+function resolveScreen() {
+    if (['welcome', 'checklist', 'admin'].includes(props.mode)) return props.mode;
+    return props.auth?.isAdmin ? 'admin' : 'welcome';
+}
+
+function dateOffset(value, offset) {
+    const [year, month, day] = value.split('-').map(Number);
+    const date = new Date(year, month - 1, day, 12);
+    date.setDate(date.getDate() + offset);
+    return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
+}
+
+function formatTime12(timeStr) {
+    if (!timeStr) return '';
+    const clean = String(timeStr).trim().slice(0, 5);
+    const [h, m] = clean.split(':').map(Number);
+    if (isNaN(h) || isNaN(m)) return timeStr;
+    const period = h >= 12 ? 'PM' : 'AM';
+    const hour12 = h % 12 || 12;
+    return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
+}
+
+function formatSessionPreview(startTime, endTime) {
+    if (!startTime || !endTime) return 'Isi masa mula dan tamat';
+    return `${formatTime12(startTime)} - ${formatTime12(endTime)}`;
+}
+
+function formatDate(value, locale, options) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return value;
+    const [year, month, day] = value.split('-').map(Number);
+    return new Intl.DateTimeFormat(locale, {
+        ...options, timeZone: 'Asia/Kuala_Lumpur',
+    }).format(new Date(Date.UTC(year, month - 1, day, 12)));
+}
+
+function formatTimestamp(value) {
+    if (!value) return '-';
+    return new Intl.DateTimeFormat('en-MY', {
+        dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kuala_Lumpur',
+    }).format(new Date(value));
+}
+
+function weekdayName(day) {
+    return ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][Number(day) - 1] ?? '';
+}
+
+// Computed Properties
 const activeSessions = computed(() => props.sessions.filter((session) => session.isActive));
 const templates = computed(() => collectionItems(props.templates));
 const weeklyTemplates = computed(() => collectionItems(props.weeklyTemplates));
-const taskEditorItems = computed(() => [...templates.value, ...weeklyTemplates.value]
+const monthlyTemplates = computed(() => collectionItems(props.monthlyTemplates));
+
+const taskEditorItems = computed(() => [...templates.value, ...weeklyTemplates.value, ...monthlyTemplates.value]
     .sort((left, right) => {
         if (Number(left.sessionId) !== Number(right.sessionId)) {
             return Number(left.sessionId) - Number(right.sessionId);
         }
 
-        if ((left.type === 'weekly') !== (right.type === 'weekly')) {
-            return left.type === 'daily' ? -1 : 1;
+        const typeOrder = { daily: 1, weekly: 2, monthly: 3 };
+        if (typeOrder[left.type] !== typeOrder[right.type]) {
+            return (typeOrder[left.type] || 0) - (typeOrder[right.type] || 0);
         }
 
-        return left.taskName.localeCompare(right.taskName);
+        if (left.finishTime && right.finishTime) {
+            return String(left.finishTime).localeCompare(String(right.finishTime));
+        }
+
+        return String(left.taskName || '').localeCompare(String(right.taskName || ''));
     }));
+
 const taskCollections = computed(() => collectionItems(props.collections));
 const manageableCollections = computed(() => taskCollections.value.filter((collection) => !collection.isDefault));
 const collectionSchedules = computed(() => collectionItems(props.collectionSchedules));
 const defaultCollection = computed(() => taskCollections.value.find((collection) => collection.isDefault) ?? taskCollections.value[0] ?? null);
-const collectionCalendarMonth = computed(() => props.rotationCalendar?.month || today.value.slice(0, 7));
-const collectionCalendarWeeks = computed(() => props.rotationCalendar?.weeks ?? []);
 const history = computed(() => collectionItems(props.completedTasks));
 const auditLogs = computed(() => collectionItems(props.auditLogs));
 const auditLinks = computed(() => props.auditLogs?.links ?? []);
 const publicHolidays = computed(() => collectionItems(props.publicHolidays)
     .slice()
     .sort((left, right) => String(left.date).localeCompare(String(right.date))));
+
 const today = computed(() => currentTodayString());
 const tomorrow = computed(() => dateOffset(today.value, 1));
 const isToday = computed(() => selectedDate.value === today.value);
@@ -126,6 +126,10 @@ const adminIsToday = computed(() => adminDate.value === today.value);
 const locked = computed(() => props.isReadOnly || props.dayUnavailable || Boolean(props.publicHoliday) || busy.value);
 const completedCount = computed(() => localTasks.value.filter((task) => task.completed).length);
 const progress = computed(() => localTasks.value.length ? Math.round((completedCount.value / localTasks.value.length) * 100) : 0);
+
+const collectionCalendarMonth = computed(() => props.rotationCalendar?.month || today.value.slice(0, 7));
+const collectionCalendarWeeks = computed(() => props.rotationCalendar?.weeks ?? []);
+
 const trendChart = Object.freeze({
     left: 54,
     right: 536,
@@ -141,18 +145,92 @@ const trendTicks = computed(() => Array.from({ length: 5 }, (_, index) => ({
     value: trendAxisMax.value - index * (trendAxisMax.value / 4),
     y: trendChart.top + index * ((trendChart.bottom - trendChart.top) / 4),
 })));
+
+const adminTabs = [
+    { key: 'statistics', label: 'Dashboard', icon: 'dashboard' },
+    { key: 'history', label: 'View History', icon: 'history' },
+    { key: 'collections', label: 'Rotations', icon: 'rotations' },
+    { key: 'sessions', label: 'Work Sessions', icon: 'sessions' },
+    { key: 'tasks', label: 'Manage Tasks', icon: 'tasks' },
+    { key: 'public-holidays', label: 'Public Holiday Editor', icon: 'holiday' },
+    { key: 'audit', label: 'Audit Log', icon: 'audit' },
+];
+const adminTabGroups = [
+    adminTabs.slice(0, 2),
+    adminTabs.slice(2, 6),
+    adminTabs.slice(6),
+];
 const adminTitle = computed(() => adminTabs.find((tab) => tab.key === adminTab.value)?.label ?? 'Dashboard');
 const themeToggleLabel = computed(() => theme.value === 'light'
     ? 'Light mode active. Switch to dark mode'
     : 'Dark mode active. Switch to light mode');
 
-watch(() => [props.mode, props.currentDate, props.tasks, props.dayUnavailable], async () => {
+// State Variables (refs)
+const screen = ref(resolveScreen());
+const adminTab = ref('statistics');
+const selectedDate = ref(props.currentDate || currentTodayString());
+const adminDate = ref(props.currentDate || currentTodayString());
+const localTasks = ref([]);
+const theme = ref(typeof window !== 'undefined' ? (localStorage.getItem('ff-spotless-theme') || 'light') : 'light');
+const notice = ref('');
+const actionError = ref('');
+const formErrors = ref({});
+const busy = ref(false);
+const mobileNavOpen = ref(false);
+const confirmation = ref(null);
+const adminLogin = ref('');
+const evidenceTask = ref(null);
+const evidenceFiles = ref([]);
+const evidencePreviews = ref([]);
+const completionNote = ref('');
+const viewingEvidence = ref(null);
+const viewingTaskDetails = ref(null);
+const reopeningTask = ref(null);
+const reopenReason = ref('');
+const editing = ref(null);
+const sessionEditing = ref(null);
+let themeTransitionTimer;
+let noticeDismissTimer;
+const statsFrom = ref('');
+const statsTo = ref('');
+
+const taskForm = ref({
+    task_type: 'daily',
+    task_name: '',
+    description: '',
+    task_session_id: '',
+    finish_time: '09:00',
+    collection_mode: 'single',
+    single_collection_id: '',
+    task_collection_ids: [],
+    due_weekday: 1,
+});
+const collectionForm = ref({ name: '' });
+const collectionScheduleForm = ref({
+    task_collection_id: '',
+    starts_on: currentTodayString(),
+    ends_on: dateOffset(currentTodayString(), 6),
+});
+const sessionForm = ref({ start_time: '08:00', end_time: '12:00' });
+const editForm = ref({});
+const sessionEditForm = ref({ start_time: '', end_time: '' });
+const publicHolidayForm = ref({
+    name: '',
+    date: dateOffset(currentTodayString(), 1),
+});
+const publicHolidayEditing = ref(null);
+const publicHolidayEditForm = ref({});
+const taskListFilters = ref({
+    collection_id: 'all',
+    task_type: 'all',
+    search: '',
+});
+
+watch(() => [props.mode, props.currentDate, props.tasks, props.dayUnavailable, props.auth?.isAdmin], () => {
     screen.value = resolveScreen();
-    selectedDate.value = props.currentDate;
-    adminDate.value = props.currentDate;
+    selectedDate.value = props.currentDate || currentTodayString();
+    adminDate.value = props.currentDate || currentTodayString();
     localTasks.value = props.tasks.map((task) => ({ ...task }));
-    await nextTick();
-    initializeSortables();
 }, { immediate: true, deep: true });
 
 watch(() => props.statistics, (statistics) => {
@@ -170,22 +248,13 @@ watch(theme, (value) => {
 
 watch(activeSessions, (sessions) => {
     const firstId = sessions[0]?.id ?? '';
-    if (!taskForm.value.task_session_id) taskForm.value.task_session_id = firstId;
-    nextTick(() => {
-        if (screen.value === 'admin' && adminTab.value === 'sessions') initializeSessionSortables();
-    });
-}, { immediate: true });
-
-watch(adminTab, async () => {
-    await nextTick();
-    if (screen.value === 'admin' && adminTab.value === 'sessions') {
-        initializeSessionSortables();
-    } else if (screen.value === 'checklist') {
-        initializeSortables();
-    } else {
-        destroySortables();
+    if (!taskForm.value.task_session_id) {
+        taskForm.value.task_session_id = firstId;
+        if (sessions[0]?.endTime) {
+            taskForm.value.finish_time = sessions[0].endTime.slice(0, 5);
+        }
     }
-});
+}, { immediate: true });
 
 watch(taskCollections, (collections) => {
     const firstId = collections.find((collection) => collection.isDefault)?.id ?? collections[0]?.id ?? '';
@@ -197,7 +266,6 @@ watch(taskCollections, (collections) => {
 }, { immediate: true });
 
 onBeforeUnmount(() => {
-    destroySortables();
     clearEvidenceFiles();
     if (typeof window !== 'undefined') {
         window.clearTimeout(themeTransitionTimer);
@@ -206,27 +274,12 @@ onBeforeUnmount(() => {
     if (typeof document !== 'undefined') document.documentElement.classList.remove('theme-transitioning');
 });
 
-function collectionItems(value) {
-    return Array.isArray(value) ? value : (value?.data ?? []);
-}
-
-function currentTodayString() {
-    return new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'Asia/Kuala_Lumpur', year: 'numeric', month: '2-digit', day: '2-digit',
-    }).format(new Date());
-}
-
-function resolveScreen() {
-    if (['welcome', 'checklist', 'admin'].includes(props.mode)) return props.mode;
-    return props.auth?.isAdmin ? 'admin' : 'welcome';
-}
-
 function adminIconPath(icon) {
     return {
         dashboard: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
         history: 'M12 7v5l3 2m5-2a8 8 0 1 1-2.34-5.66A8 8 0 0 1 20 12Z',
         rotations: 'M20 7v5h-5M4 17v-5h5m8.5-2.5A7 7 0 0 0 6.2 7.2L4 9.5m-1.5 5A7 7 0 0 0 13.8 16.8l2.2-2.3',
-        sessions: 'M16 20v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1m6-9a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm10 9v-1a4 4 0 0 0-3-3.87m-1-12a4 4 0 0 1 0 7.75',
+        sessions: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z',
         tasks: 'M9 5h6m-6 7h6m-6 7h6M5 5h.01M5 12h.01M5 19h.01',
         holiday: 'M7 3v3m10-3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm3 8h.01m4 0h.01m4 0h.01m-8 4h.01m4 0h.01',
         audit: 'M6 3h9l3 3v15H6V3Zm8 0v4h4M9 11h6m-6 4h6m-6 4h4',
@@ -239,7 +292,6 @@ function toggleTheme() {
         && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
         const root = document.documentElement;
         root.classList.add('theme-transitioning');
-        window.clearTimeout(themeTransitionTimer);
         themeTransitionTimer = window.setTimeout(() => root.classList.remove('theme-transitioning'), 180);
     }
 
@@ -247,30 +299,31 @@ function toggleTheme() {
 }
 
 function sessionTasks(sessionId) {
-    return localTasks.value.filter((task) => Number(task.sessionId) === Number(sessionId))
-        .sort((a, b) => a.position - b.position);
+    return localTasks.value.filter((task) => Number(task.sessionId) === Number(sessionId));
 }
 
 function defaultCollectionId() {
-    return taskCollections.value.find((collection) => collection.isDefault)?.id ?? taskCollections.value[0]?.id ?? '';
+    return taskCollections.value?.find((collection) => collection.isDefault)?.id ?? taskCollections.value?.[0]?.id ?? '';
 }
 
 function defaultSchedulableCollectionId() {
-    return manageableCollections.value[0]?.id ?? '';
+    return manageableCollections.value?.[0]?.id ?? '';
 }
 
 function defaultTaskForm() {
     const collectionId = defaultCollectionId();
+    const session = activeSessions.value?.[0];
 
     return {
         task_type: 'daily',
         task_name: '',
-        task_session_id: activeSessions.value[0]?.id ?? '',
+        description: '',
+        task_session_id: session?.id ?? '',
+        finish_time: session?.endTime ? session.endTime.slice(0, 5) : '09:00',
         collection_mode: 'single',
         single_collection_id: collectionId,
         task_collection_ids: collectionId ? [collectionId] : [],
         due_weekday: 1,
-        credit_hours: 1,
     };
 }
 
@@ -429,13 +482,6 @@ function auditActorTone(actorType) {
         : 'border border-sky-400/40 bg-sky-500/10 text-sky-300';
 }
 
-function weeklyCadenceLabel(item) {
-    const repeat = Number(item.repeatEveryWeeks || 1);
-    const cadence = repeat === 1 ? 'Every week' : `Every ${repeat} weeks`;
-
-    return `${cadence} - starts week of ${displayAdminDate(item.startsOn)}`;
-}
-
 function historyFor(sessionId) {
     return history.value.filter((item) => Number(item.sessionId) === Number(sessionId));
 }
@@ -463,15 +509,6 @@ function matchesTaskCollectionFilter(item) {
 
 function filteredTaskEditorItemsFor(sessionId) {
     return taskEditorItemsFor(sessionId);
-}
-
-function templatesFor(sessionId, weekly = false) {
-    return (weekly ? weeklyTemplates.value : templates.value)
-        .filter((item) => Number(item.sessionId) === Number(sessionId));
-}
-
-function sessionCredits(items) {
-    return items.reduce((sum, item) => sum + Number(item.creditHours || 0), 0).toFixed(2).replace(/\.00$/, '');
 }
 
 function taskCollectionSummary(item) {
@@ -505,7 +542,9 @@ function taskCollectionPills(item) {
 }
 
 function taskTypeLabel(type) {
-    return type === 'weekly' ? 'Weekly' : 'Daily';
+    if (type === 'monthly') return 'Bulanan';
+    if (type === 'weekly') return 'Mingguan';
+    return 'Harian';
 }
 
 function normalizeTaskPayload(form) {
@@ -515,28 +554,17 @@ function normalizeTaskPayload(form) {
             ? [...new Set((form.task_collection_ids ?? []).map(Number).filter(Boolean))]
             : (form.single_collection_id ? [Number(form.single_collection_id)] : []);
 
+    const finishTime = form.finish_time ? (form.finish_time.length === 5 ? `${form.finish_time}:00` : form.finish_time) : '';
+
     return {
         task_name: form.task_name,
+        description: form.description?.trim() || null,
         task_session_id: form.task_session_id,
         applies_to_all_collections: form.collection_mode === 'all',
         task_collection_ids: collectionIds,
         due_weekday: form.due_weekday,
-        credit_hours: form.credit_hours,
+        finish_time: finishTime,
     };
-}
-
-function weeklyTemplateCredits(items) {
-    return items
-        .reduce((sum, item) => sum + (Number(item.creditHours || 0) / Math.max(1, Number(item.repeatEveryWeeks || 1))), 0)
-        .toFixed(2)
-        .replace(/\.00$/, '');
-}
-
-function sessionCreditsByType(items, type) {
-    return items
-        .filter((item) => item.type === type)
-        .reduce((sum, item) => sum + Number(item.creditHours || 0), 0)
-        .toFixed(2);
 }
 
 function sessionTone(index) {
@@ -568,32 +596,6 @@ function displayAdminDate(value) {
 function displayDateInput(value) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return '';
     return `${value.slice(8, 10)}/${value.slice(5, 7)}/${value.slice(0, 4)}`;
-}
-
-function formatDate(value, locale, options) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return value;
-    const [year, month, day] = value.split('-').map(Number);
-    return new Intl.DateTimeFormat(locale, {
-        ...options, timeZone: 'Asia/Kuala_Lumpur',
-    }).format(new Date(Date.UTC(year, month - 1, day, 12)));
-}
-
-function weekdayName(day) {
-    return ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][Number(day) - 1] ?? '';
-}
-
-function dateOffset(value, offset) {
-    const [year, month, day] = value.split('-').map(Number);
-    const date = new Date(year, month - 1, day, 12);
-    date.setDate(date.getDate() + offset);
-    return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
-}
-
-function formatTimestamp(value) {
-    if (!value) return '-';
-    return new Intl.DateTimeFormat('en-MY', {
-        dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kuala_Lumpur',
-    }).format(new Date(value));
 }
 
 function setNotice(message) {
@@ -703,9 +705,22 @@ function confirmAction() {
 }
 
 function loginAdmin() {
-    router.post('/admin/login', { password: adminLogin.value }, inertiaOptions(
-        'Admin access opened.', 'Admin password was not accepted.', () => adminLogin.value = '', 'login',
-    ));
+    router.post('/admin/login', { password: adminLogin.value }, {
+        preserveScroll: true,
+        onStart: () => {
+            busy.value = true;
+            clearErrors('login');
+        },
+        onSuccess: () => {
+            setNotice('Admin access opened.');
+            adminLogin.value = '';
+            screen.value = 'admin';
+        },
+        onError: (errors) => fail(errors, 'Admin password was not accepted.', 'login'),
+        onFinish: () => {
+            busy.value = false;
+        },
+    });
 }
 
 function openAdminLogin() {
@@ -715,14 +730,36 @@ function openAdminLogin() {
 
 function logoutAdmin() {
     router.post('/admin/logout', {}, {
-        onFinish: () => { screen.value = 'welcome'; },
+        preserveScroll: true,
+        onStart: () => busy.value = true,
+        onSuccess: () => {
+            screen.value = 'welcome';
+        },
+        onFinish: () => {
+            busy.value = false;
+            screen.value = 'welcome';
+        },
+    });
+}
+
+function openWelcome() {
+    router.get('/', {}, {
+        preserveScroll: true,
+        onStart: () => busy.value = true,
+        onSuccess: () => {
+            screen.value = 'welcome';
+        },
+        onFinish: () => busy.value = false,
     });
 }
 
 function openChecklist(date = null) {
     router.get('/checklist', date ? { date } : {}, {
-        preserveScroll: true, preserveState: true,
+        preserveScroll: true,
         onStart: () => busy.value = true,
+        onSuccess: () => {
+            screen.value = 'checklist';
+        },
         onError: (errors) => fail(errors, 'Senarai semak tidak dapat dibuka.'),
         onFinish: () => busy.value = false,
     });
@@ -742,8 +779,11 @@ function openAdmin(date = null, options = {}) {
     });
 
     router.get('/admin', data, {
-        preserveScroll: true, preserveState: true,
+        preserveScroll: true,
         onStart: () => busy.value = true,
+        onSuccess: () => {
+            screen.value = 'admin';
+        },
         onFinish: () => busy.value = false,
     });
 }
@@ -766,6 +806,14 @@ function openEvidence(task) {
     evidenceFiles.value = [];
     evidencePreviews.value = [];
     completionNote.value = '';
+}
+
+function openTaskDetails(task) {
+    viewingTaskDetails.value = task;
+}
+
+function closeTaskDetails() {
+    viewingTaskDetails.value = null;
 }
 
 function selectEvidence(event) {
@@ -831,11 +879,6 @@ function completeTask() {
     });
 }
 
-function viewOverdue(task) {
-    adminTab.value = 'history';
-    openAdmin(task.date);
-}
-
 function openReopen(task) {
     reopeningTask.value = task;
     reopenReason.value = '';
@@ -864,86 +907,17 @@ function reopenTask() {
     ));
 }
 
-function destroySortables() {
-    while (sortables.length) sortables.pop().destroy();
-}
-
-function initializeSortables() {
-    destroySortables();
-    if (!isToday.value || props.dayUnavailable || props.publicHoliday || screen.value !== 'checklist') return;
-    document.querySelectorAll('[data-sortable-session]').forEach((element) => {
-        const sessionId = Number(element.dataset.sortableSession);
-        sortables.push(Sortable.create(element, {
-            animation: 160,
-            handle: '.drag-handle',
-            ghostClass: 'opacity-40',
-            onEnd: () => persistDomOrder(element, sessionId),
-        }));
-    });
-}
-
-function initializeSessionSortables() {
-    destroySortables();
-    if (screen.value !== 'admin' || adminTab.value !== 'sessions') return;
-    const element = document.querySelector('[data-sortable-work-sessions]');
-    if (!element) return;
-
-    sortables.push(Sortable.create(element, {
-        animation: 160,
-        handle: '.session-drag-handle',
-        ghostClass: 'opacity-40',
-        onEnd: () => {
-            const sessionIds = Array.from(element.querySelectorAll('[data-session-id]'))
-                .map((node) => Number(node.dataset.sessionId));
-            router.patch('/admin/sessions/reorder', { session_ids: sessionIds },
-                inertiaOptions('Session order saved.', 'Session order could not be saved.'));
-        },
-    }));
-}
-
-function persistDomOrder(element, sessionId) {
-    const keys = Array.from(element.querySelectorAll('[data-task-key]')).map((node) => node.dataset.taskKey);
-    const items = keys.map((key) => {
-        const [type, id] = key.split(':');
-        return { type, id: Number(id) };
-    });
-    reorderLocal(sessionId, keys);
-    persistOrder(sessionId, items);
-}
-
-function moveTask(sessionId, key, direction) {
-    const tasks = sessionTasks(sessionId);
-    const index = tasks.findIndex((task) => task.key === key);
-    const target = index + direction;
-    if (index < 0 || target < 0 || target >= tasks.length || locked.value) return;
-    [tasks[index], tasks[target]] = [tasks[target], tasks[index]];
-    const keys = tasks.map((task) => task.key);
-    reorderLocal(sessionId, keys);
-    persistOrder(sessionId, tasks.map(({ type, id }) => ({ type, id })));
-}
-
-function reorderLocal(sessionId, keys) {
-    const positions = new Map(keys.map((key, index) => [key, index + 1]));
-    localTasks.value = localTasks.value.map((task) => Number(task.sessionId) === Number(sessionId)
-        ? { ...task, position: positions.get(task.key) ?? task.position }
-        : task);
-}
-
-function persistOrder(sessionId, items) {
-    router.post('/checklist/order', {
-        date: selectedDate.value,
-        task_session_id: sessionId,
-        items,
-    }, inertiaOptions('Susunan tugasan disimpan.', 'Susunan tugasan tidak dapat disimpan.'));
-}
-
 function createTask() {
-    const isWeekly = taskForm.value.task_type === 'weekly';
-    const base = isWeekly ? '/admin/weekly-templates' : '/admin/templates';
+    const type = taskForm.value.task_type;
+    const base = type === 'monthly'
+        ? '/admin/monthly-templates'
+        : (type === 'weekly' ? '/admin/weekly-templates' : '/admin/templates');
+
+    const label = type === 'monthly' ? 'Monthly' : (type === 'weekly' ? 'Weekly' : 'Daily');
 
     router.post(base, normalizeTaskPayload(taskForm.value), inertiaOptions(
-        `${isWeekly ? 'Weekly' : 'Daily'} task added.`,
-        `${isWeekly ? 'Weekly' : 'Daily'} task could not be added.`,
+        `${label} task added.`,
+        `${label} task could not be added.`,
         () => taskForm.value = defaultTaskForm(),
         'task',
     ));
@@ -1017,55 +991,37 @@ function deleteCollection(collection) {
     });
 }
 
-function createCollectionSchedule() {
-    router.post('/admin/collection-schedules', collectionScheduleForm.value, inertiaOptions(
-        'Collection schedule saved.',
-        'Collection schedule could not be saved.',
-        () => {
-            collectionScheduleForm.value = {
-                task_collection_id: defaultSchedulableCollectionId(),
-                starts_on: currentTodayString(),
-                ends_on: dateOffset(currentTodayString(), 6),
-            };
-        },
-        'collectionSchedule',
-    ));
-}
-
-function deleteCollectionSchedule(schedule) {
-    requestConfirmation({
-        title: 'Remove collection date range?',
-        description: `The ${schedule.collectionName} collection will stop applying from ${displayAdminDate(schedule.startsOn)} to ${displayAdminDate(schedule.endsOn)}. Those dates will use the Always Active collection.`,
-        confirmLabel: 'Remove date range',
-        action: () => router.delete(`/admin/collection-schedules/${schedule.id}`, inertiaOptions(
-            'Collection schedule removed.', 'Collection schedule could not be removed.', null, 'collectionSchedule',
-        )),
-    });
-}
-
 function openEdit(kind, item) {
     editing.value = { kind, item };
     editForm.value = {
         task_type: item.type,
         task_name: item.taskName,
+        description: item.description || '',
         task_session_id: item.sessionId,
+        finish_time: item.finishTime ? item.finishTime.slice(0, 5) : '',
         collection_mode: item.appliesToAllCollections ? 'all' : ((item.collectionIds?.length ?? 0) > 1 ? 'multiple' : 'single'),
         single_collection_id: item.collectionIds?.[0] ?? defaultCollectionId(),
         task_collection_ids: item.collectionIds?.length ? [...item.collectionIds] : (defaultCollectionId() ? [defaultCollectionId()] : []),
-        credit_hours: item.creditHours,
         due_weekday: item.dueWeekday ?? 1,
     };
 }
 
 function saveEdit() {
-    const base = editForm.value.task_type === 'weekly' ? '/admin/weekly-templates' : '/admin/templates';
+    const type = editForm.value.task_type;
+    const base = type === 'monthly'
+        ? '/admin/monthly-templates'
+        : (type === 'weekly' ? '/admin/weekly-templates' : '/admin/templates');
+
     router.patch(`${base}/${editing.value.item.id}`, normalizeTaskPayload(editForm.value), inertiaOptions(
         'Template updated.', 'Template could not be updated.', () => editing.value = null, 'taskEdit',
     ));
 }
 
 function deleteTemplate(kind, item) {
-    const base = kind === 'daily' ? '/admin/templates' : '/admin/weekly-templates';
+    const base = kind === 'monthly'
+        ? '/admin/monthly-templates'
+        : (kind === 'weekly' ? '/admin/weekly-templates' : '/admin/templates');
+
     requestConfirmation({
         title: 'Archive task?',
         description: `“${item.taskName}” will stop appearing on new checklists. Existing history and completed records will be kept.`,
@@ -1078,18 +1034,21 @@ function deleteTemplate(kind, item) {
 
 function createSession() {
     router.post('/admin/sessions', sessionForm.value, inertiaOptions(
-        'Session added.', 'Session could not be added.', () => sessionForm.value.name = '', 'session',
+        'Session added.', 'Session could not be added.', () => sessionForm.value = { start_time: '08:00', end_time: '12:00' }, 'session',
     ));
 }
 
 function editSession(session) {
     sessionEditing.value = session;
-    editForm.value = { name: session.name };
+    sessionEditForm.value = {
+        start_time: session.startTime ? session.startTime.slice(0, 5) : '08:00',
+        end_time: session.endTime ? session.endTime.slice(0, 5) : '12:00',
+    };
 }
 
 function saveSession() {
-    router.patch(`/admin/sessions/${sessionEditing.value.id}`, editForm.value, inertiaOptions(
-        'Session name updated.', 'Session could not be updated.', () => sessionEditing.value = null, 'sessionEdit',
+    router.patch(`/admin/sessions/${sessionEditing.value.id}`, sessionEditForm.value, inertiaOptions(
+        'Work session updated.', 'Work session could not be updated.', () => sessionEditing.value = null, 'sessionEdit',
     ));
 }
 
@@ -1161,10 +1120,8 @@ function auditActionLabel(action) {
         'admin.logout': 'Admin logged out',
         'task.completed': 'Task completed',
         'task.reopened': 'Task reopened',
-        'checklist.reordered': 'Checklist reordered',
         'session.created': 'Work session added',
         'session.updated': 'Work session updated',
-        'session.reordered': 'Work sessions reordered',
         'session.archived': 'Work session archived',
         'task_template.created': 'Task added',
         'task_template.updated': 'Task updated',
@@ -1213,7 +1170,7 @@ function chooseAdminDate(date) {
         <main v-if="screen === 'welcome'" class="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12 text-center">
             <div class="mx-auto mb-7 flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-[#ED4264] to-[#FFEDBC] text-3xl font-black text-zinc-950 shadow-xl shadow-rose-950/40">FF</div>
             <h1 class="text-3xl font-black tracking-tight">FF Spotless</h1>
-            <p class="mt-3 text-sm leading-relaxed text-zinc-400">Senarai semak pembersihan harian dan tugasan mingguan.</p>
+            <p class="mt-3 text-sm leading-relaxed text-zinc-400">Senarai semak pembersihan harian, mingguan, dan bulanan mengikut jadual sesi kerja.</p>
             <button class="mt-8 h-14 rounded-2xl bg-gradient-to-r from-[#ED4264] to-[#FFEDBC] font-black text-zinc-950" @click="openChecklist()">Buka Senarai</button>
             <button class="mt-3 h-12 rounded-2xl border border-zinc-700 text-sm font-bold text-zinc-300" @click="openAdminLogin">Admin</button>
         </main>
@@ -1232,7 +1189,7 @@ function chooseAdminDate(date) {
         <main v-else-if="screen === 'checklist'" class="mx-auto min-h-screen max-w-3xl">
             <header class="sticky top-0 z-20 border-b border-zinc-800 bg-[#121212]/95 px-5 py-4 backdrop-blur">
                 <div class="flex items-center justify-between">
-                    <button type="button" class="cleaner-logout text-sm font-bold" @click="router.get('/')">&lt; Log Keluar</button>
+                    <button type="button" class="cleaner-logout text-sm font-bold" @click="openWelcome">&lt; Log Keluar</button>
                     <button type="button" class="theme-toggle rounded-lg border border-zinc-700" :aria-label="themeToggleLabel" :title="themeToggleLabel" @click="toggleTheme">
                         <svg v-if="theme === 'light'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                             <circle cx="12" cy="12" r="4"></circle>
@@ -1265,37 +1222,49 @@ function chooseAdminDate(date) {
                 <div v-if="!localTasks.length" class="rounded-2xl border border-dashed border-zinc-700 p-10 text-center text-sm text-zinc-500">Tiada tugasan untuk tarikh ini.</div>
                 <section v-for="(session, sessionIndex) in sessions" :key="session.id" v-show="sessionTasks(session.id).length">
                     <header class="mb-3 flex items-center justify-between">
-                        <h2 class="font-black uppercase tracking-wider" :class="sessionTone(sessionIndex)">{{ session.name }}</h2>
-                        <span class="rounded-full border border-zinc-700 px-2.5 py-1 text-xs font-bold text-zinc-400">{{ sessionCredits(sessionTasks(session.id)) }} jam kredit</span>
+                        <div class="flex items-baseline gap-2">
+                            <h2 class="font-black uppercase tracking-wider" :class="sessionTone(sessionIndex)">{{ session.name }}</h2>
+                        </div>
+                        <span class="rounded-full border border-zinc-700 px-2.5 py-1 text-xs font-bold text-zinc-400">{{ sessionTasks(session.id).length }} tugasan</span>
                     </header>
-                    <div class="space-y-2" :data-sortable-session="session.id">
-                        <article v-for="(task, taskIndex) in sessionTasks(session.id)" :key="task.key" :data-task-key="task.key" class="flex items-center gap-2 rounded-2xl border p-3" :class="(dayUnavailable || publicHoliday) && !task.completed ? 'border-zinc-800 bg-zinc-900/40 opacity-60' : 'border-zinc-700 bg-zinc-900'">
-                            <button v-if="isToday && !dayUnavailable && !publicHoliday" class="drag-handle inline-flex h-8 w-6 cursor-grab items-center justify-center text-zinc-500" aria-label="Seret untuk menyusun">
-                                <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5"><circle cx="8" cy="5" r="1.7"></circle><circle cx="16" cy="5" r="1.7"></circle><circle cx="8" cy="12" r="1.7"></circle><circle cx="16" cy="12" r="1.7"></circle><circle cx="8" cy="19" r="1.7"></circle><circle cx="16" cy="19" r="1.7"></circle></svg>
+                    <div class="space-y-2">
+                        <article v-for="task in sessionTasks(session.id)" :key="task.key" class="flex items-center gap-3 rounded-2xl border p-3.5" :class="(dayUnavailable || publicHoliday) && !task.completed ? 'border-zinc-800 bg-zinc-900/40 opacity-60' : 'border-zinc-700 bg-zinc-900'">
+                            <button
+                                class="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border-2"
+                                :class="task.completed ? 'border-[#ED4264] bg-[#ED4264] text-white' : (locked || dayUnavailable || publicHoliday) ? 'border-zinc-700 cursor-not-allowed opacity-50' : 'border-zinc-500 hover:border-[#ED4264]'"
+                                :disabled="locked || task.completed"
+                                :aria-label="task.completed ? 'Tugasan selesai' : `Tandakan ${task.text} selesai`"
+                                @click="openEvidence(task)"
+                            >
+                                <span v-if="task.completed" class="text-xs font-black">&#10003;</span>
                             </button>
-                            <button class="min-w-0 flex-1 text-left" :class="(dayUnavailable || publicHoliday) && !task.completed ? 'cursor-not-allowed' : ''" :disabled="locked || task.completed" @click="openEvidence(task)">
-                                <span class="flex items-center gap-2">
-                                    <span v-if="!dayUnavailable && !publicHoliday" class="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border-2" :class="task.completed ? 'border-[#ED4264] bg-[#ED4264] text-white' : 'border-zinc-600'"><span v-if="task.completed">&#10003;</span></span>
-                                    <span class="min-w-0">
-                                        <span class="block text-sm font-semibold" :class="task.completed ? 'text-zinc-500 line-through' : (dayUnavailable || publicHoliday) ? 'text-zinc-600' : 'text-zinc-100'">{{ task.text }}</span>
-                                        <span class="mt-1 flex flex-wrap gap-2 text-xs font-bold uppercase text-zinc-500">
-                                            <span>{{ task.creditHours }} jam</span>
-                                            <template v-if="task.isWeekly">
-                                                <span aria-hidden="true">|</span>
-                                                <span class="text-sky-300">Mingguan - sebelum {{ displayDate(task.originalDueDate) }}</span>
-                                                <template v-if="task.postponedCount">
-                                                    <span aria-hidden="true">|</span>
-                                                    <span>Ditunda {{ task.postponedCount }}x</span>
-                                                </template>
-                                            </template>
-                                        </span>
+
+                            <div class="min-w-0 flex-1 cursor-pointer" @click="openTaskDetails(task)">
+                                <div class="flex items-baseline justify-between gap-2">
+                                    <span class="block text-sm font-semibold" :class="task.completed ? 'text-zinc-500 line-through' : (dayUnavailable || publicHoliday) ? 'text-zinc-600' : 'text-zinc-100'">{{ task.text }}</span>
+                                </div>
+                                <div class="mt-1 flex flex-wrap items-center gap-2 text-xs font-bold text-zinc-400">
+                                    <span class="rounded-md border border-zinc-700 bg-zinc-800/80 px-2 py-0.5 text-[11px] font-semibold text-zinc-300">{{ task.timeSpanFormatted }}</span>
+                                    <span v-if="task.isMonthly" class="rounded-md border border-purple-500/40 bg-purple-500/10 px-2 py-0.5 text-[11px] font-semibold text-purple-300">Bulanan</span>
+                                    <span v-else-if="task.isWeekly" class="rounded-md border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[11px] font-semibold text-sky-300">Mingguan</span>
+                                    <span v-if="task.postponedCount" class="text-[11px] text-amber-400">Ditunda {{ task.postponedCount }}x</span>
+                                    <span v-if="task.description" class="inline-flex items-center gap-1 text-[11px] text-zinc-400">
+                                        <svg class="h-3 w-3 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4M12 8h.01"></path></svg>
+                                        Butiran
                                     </span>
-                                </span>
-                            </button>
-                            <div v-if="isToday && !dayUnavailable && !publicHoliday" class="flex flex-col gap-1">
-                                <button class="small-button inline-flex h-8 w-8 items-center justify-center p-0 text-zinc-300 disabled:opacity-20" aria-label="Move task up" title="Move task up" :disabled="taskIndex === 0 || busy" @click="moveTask(session.id, task.key, -1)"><svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" class="h-3 w-3"><path d="m10 5 5 6H5l5-6Z"></path></svg></button>
-                                <button class="small-button inline-flex h-8 w-8 items-center justify-center p-0 text-zinc-300 disabled:opacity-20" aria-label="Move task down" title="Move task down" :disabled="taskIndex === sessionTasks(session.id).length - 1 || busy" @click="moveTask(session.id, task.key, 1)"><svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" class="h-3 w-3"><path d="m5 9 5 6 5-6H5Z"></path></svg></button>
+                                </div>
                             </div>
+
+                            <button
+                                v-if="task.description"
+                                type="button"
+                                class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
+                                aria-label="Lihat penerangan tugasan"
+                                title="Lihat penerangan tugasan"
+                                @click="openTaskDetails(task)"
+                            >
+                                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4M12 8h.01"></path></svg>
+                            </button>
                         </article>
                     </div>
                 </section>
@@ -1310,7 +1279,7 @@ function chooseAdminDate(date) {
                     <input type="checkbox" class="mt-1 h-5 w-5 accent-[#ED4264]" :checked="dayUnavailable" :disabled="!isToday || busy" @change="toggleAvailability">
                     <span>
                         <strong class="block text-sm">MC / tidak tersedia hari ini</strong>
-                        <span class="mt-1 block text-xs leading-relaxed text-zinc-400">Mengunci tugasan harian dan memindahkan tugasan mingguan yang perlu dibuat hari ini.</span>
+                        <span class="mt-1 block text-xs leading-relaxed text-zinc-400">Mengunci tugasan harian dan memindahkan tugasan mingguan/bulanan yang perlu dibuat hari ini.</span>
                     </span>
                 </label>
             </section>
@@ -1369,7 +1338,6 @@ function chooseAdminDate(date) {
                     </div>
                 </header>
 
-                <!-- Mobile Drawer Menu (Overlay on top of the page) -->
                 <div class="lg:hidden">
                     <Transition name="drawer-backdrop">
                         <div
@@ -1460,26 +1428,26 @@ function chooseAdminDate(date) {
                         <summary class="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 px-3 py-2 marker:hidden">
                             <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                                 <p class="text-xs font-black uppercase tracking-[0.16em] text-violet-300">Manage Tasks help</p>
-                                <p class="truncate text-xs font-bold text-zinc-200">How to decide where a task appears</p>
+                                <p class="truncate text-xs font-bold text-zinc-200">How task timing and schedule types work</p>
                             </div>
                             <span class="rounded-full border border-violet-400/30 bg-violet-400/10 px-2 py-0.5 text-xs font-black uppercase text-violet-200 transition group-open:bg-violet-400/20">Open</span>
                         </summary>
                         <div class="grid gap-1.5 px-3 pb-3 text-[11px] text-zinc-300 md:grid-cols-2 xl:grid-cols-4">
                             <div class="rounded-lg border border-zinc-700 bg-zinc-950/50 p-2.5">
-                                <p class="font-black text-zinc-100">Daily or weekly</p>
-                                <p class="mt-0.5 text-zinc-400">Daily repeats every active day. Weekly appears on the selected weekday.</p>
+                                <p class="font-black text-zinc-100">Daily, Weekly, or Monthly</p>
+                                <p class="mt-0.5 text-zinc-400">Daily repeats each active day. Weekly appears on the chosen weekday. Monthly appears on the last Friday of each month.</p>
                             </div>
                             <div class="rounded-lg border border-zinc-700 bg-zinc-950/50 p-2.5">
-                                <p class="font-black text-zinc-100">Always Active</p>
-                                <p class="mt-0.5 text-zinc-400">Choose this for tasks cleaners should see every day.</p>
+                                <p class="font-black text-zinc-100">Finish time & Dynamic Start</p>
+                                <p class="mt-0.5 text-zinc-400">Set the target finish time. The start time is calculated automatically from previous task's finish time or session start time.</p>
                             </div>
                             <div class="rounded-lg border border-zinc-700 bg-zinc-950/50 p-2.5">
-                                <p class="font-black text-zinc-100">Single or multiple</p>
-                                <p class="mt-0.5 text-zinc-400">Use Single for one rotation, or Multiple when the same task belongs to several rotations.</p>
+                                <p class="font-black text-zinc-100">Task Details / Description</p>
+                                <p class="mt-0.5 text-zinc-400">Add detailed instructions for cleaners to review in the task info modal.</p>
                             </div>
                             <div class="rounded-lg border border-zinc-700 bg-zinc-950/50 p-2.5">
-                                <p class="font-black text-zinc-100">Find before editing</p>
-                                <p class="mt-0.5 text-zinc-400">Use the filters to check which rotation a task belongs to before changing it.</p>
+                                <p class="font-black text-zinc-100">Rotation allocation</p>
+                                <p class="mt-0.5 text-zinc-400">Assign tasks to one rotation, multiple rotations, or all rotations.</p>
                             </div>
                         </div>
                     </details>
@@ -1553,15 +1521,27 @@ function chooseAdminDate(date) {
                             </div>
                         </div>
                         <section v-for="(session, index) in sessions" :key="session.id" v-show="historyFor(session.id).length">
-                            <header class="mb-3 flex items-center justify-between gap-3"><h2 class="font-black uppercase" :class="sessionTone(index)">{{ session.name }}</h2><span class="shrink-0 text-xs text-zinc-500">{{ sessionCreditsByType(historyFor(session.id), 'daily') }} ch/day <span aria-hidden="true">-</span> {{ sessionCreditsByType(historyFor(session.id), 'weekly') }} ch/week</span></header>
+                            <header class="mb-3 flex items-center justify-between gap-3">
+                                <h2 class="font-black uppercase" :class="sessionTone(index)">{{ session.name }}</h2>
+                                <span class="rounded-full border border-zinc-700 px-2.5 py-1 text-xs font-bold text-zinc-400">{{ historyFor(session.id).length }} record{{ historyFor(session.id).length === 1 ? '' : 's' }}</span>
+                            </header>
                             <div class="grid items-start gap-2 md:grid-cols-2">
                                 <article v-for="entry in historyFor(session.id)" :key="entry.key" class="rounded-xl border bg-zinc-900 p-4 transition duration-150" :class="entry.evidence?.length ? 'border-zinc-700 hover:-translate-y-0.5 hover:border-sky-400/70 hover:bg-sky-400/5 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-sky-400' : 'border-zinc-700 opacity-75'">
                                     <button class="w-full text-left disabled:cursor-default" :class="entry.evidence?.length ? 'cursor-pointer' : ''" :disabled="!entry.evidence?.length" @click="viewingEvidence = entry">
-                                    <div class="flex items-start justify-between gap-3"><strong class="min-w-0 flex-1 text-sm">{{ entry.text }}</strong><span class="shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-xs font-black uppercase" :class="entry.status === 'completed' ? 'bg-emerald-500/10 text-emerald-300' : entry.status === 'missed' ? 'bg-rose-500/10 text-rose-300' : 'bg-zinc-800 text-zinc-400'">{{ entry.status === 'completed' ? 'Completed' : entry.status === 'missed' ? 'Missed' : 'Pending' }}</span></div>
-                                    <p class="mt-2 text-xs text-zinc-500">{{ entry.creditHours }} hrs<span v-if="entry.type === 'weekly'"> - Weekly, due {{ displayAdminDate(entry.originalDueDate) }}</span></p>
-                                    <p v-if="entry.isCompleted" class="mt-1 text-xs text-zinc-500">{{ formatTimestamp(entry.completedAt) }} - {{ entry.evidence.length }} photo{{ entry.evidence.length === 1 ? '' : 's' }}</p>
-                                    <p v-if="entry.completionNote" class="mt-2 text-xs text-zinc-300">Note: {{ entry.completionNote }}</p>
-                                    <p v-if="entry.evidence?.length" class="mt-3 inline-flex items-center gap-1 text-xs font-bold text-sky-300">View proof photo{{ entry.evidence.length === 1 ? '' : 's' }} <span aria-hidden="true">-&gt;</span></p>
+                                        <div class="flex items-start justify-between gap-3">
+                                            <strong class="min-w-0 flex-1 text-sm">{{ entry.text }}</strong>
+                                            <span class="shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-xs font-black uppercase" :class="entry.status === 'completed' ? 'bg-emerald-500/10 text-emerald-300' : entry.status === 'missed' ? 'bg-rose-500/10 text-rose-300' : 'bg-zinc-800 text-zinc-400'">{{ entry.status === 'completed' ? 'Completed' : entry.status === 'missed' ? 'Missed' : 'Pending' }}</span>
+                                        </div>
+                                        <div class="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-zinc-400">
+                                            <span class="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300">{{ entry.timeSpanFormatted }}</span>
+                                            <span v-if="entry.type === 'monthly'" class="text-purple-300">Monthly</span>
+                                            <span v-else-if="entry.type === 'weekly'" class="text-sky-300">Weekly (due {{ displayAdminDate(entry.originalDueDate) }})</span>
+                                            <span v-else class="text-zinc-400">Daily</span>
+                                        </div>
+                                        <p v-if="entry.description" class="mt-1 text-xs text-zinc-400">{{ entry.description }}</p>
+                                        <p v-if="entry.isCompleted" class="mt-1 text-xs text-zinc-500">{{ formatTimestamp(entry.completedAt) }} - {{ entry.evidence.length }} photo{{ entry.evidence.length === 1 ? '' : 's' }}</p>
+                                        <p v-if="entry.completionNote" class="mt-2 text-xs text-zinc-300">Note: {{ entry.completionNote }}</p>
+                                        <p v-if="entry.evidence?.length" class="mt-3 inline-flex items-center gap-1 text-xs font-bold text-sky-300">View proof photo{{ entry.evidence.length === 1 ? '' : 's' }} <span aria-hidden="true">-&gt;</span></p>
                                     </button>
                                 </article>
                             </div>
@@ -1678,15 +1658,44 @@ function chooseAdminDate(date) {
                     </div>
 
                     <div v-else-if="adminTab === 'sessions'" class="grid gap-6 lg:grid-cols-[360px_1fr]">
-                        <form class="h-full space-y-3 rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5" @submit.prevent="createSession">
+                        <form class="h-fit space-y-3 rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5" @submit.prevent="createSession">
                             <h2 class="font-black">Add Work Session</h2>
-                            <label class="form-label" for="session-name">Session name</label>
-                            <input id="session-name" v-model.trim="sessionForm.name" required maxlength="100" class="field" placeholder="For example, 4:00 PM - 6:00 PM" v-bind="validationAttrs('session', 'name')">
-                            <p v-if="errorFor('session', 'name')" :id="errorId('session', 'name')" class="field-error">{{ errorFor('session', 'name') }}</p>
+                            <p class="text-xs text-zinc-400">Set the session start and end time. The system will automatically name and order sessions by time.</p>
+
+                            <div class="grid grid-cols-2 gap-2">
+                                <label class="form-label" for="session-start">
+                                    Start time
+                                    <input id="session-start" v-model="sessionForm.start_time" required type="time" class="field" v-bind="validationAttrs('session', 'start_time')">
+                                </label>
+                                <label class="form-label" for="session-end">
+                                    End time
+                                    <input id="session-end" v-model="sessionForm.end_time" required type="time" class="field" v-bind="validationAttrs('session', 'end_time')">
+                                </label>
+                            </div>
+                            <p v-if="errorFor('session', 'start_time')" :id="errorId('session', 'start_time')" class="field-error">{{ errorFor('session', 'start_time') }}</p>
+                            <p v-if="errorFor('session', 'end_time')" :id="errorId('session', 'end_time')" class="field-error">{{ errorFor('session', 'end_time') }}</p>
+
+                            <div class="rounded-xl border border-zinc-700 bg-zinc-950 p-3 text-xs">
+                                <span class="text-zinc-500 font-bold uppercase tracking-wider block">Preview</span>
+                                <strong class="text-sm text-zinc-200 mt-1 block">{{ formatSessionPreview(sessionForm.start_time, sessionForm.end_time) }}</strong>
+                            </div>
+
                             <button class="primary-button">Add work session</button>
                         </form>
-                        <div class="space-y-2" data-sortable-work-sessions>
-                            <article v-for="(session, index) in activeSessions" :key="session.id" :data-session-id="session.id" class="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-4"><button type="button" class="session-drag-handle inline-flex h-8 w-5 cursor-grab items-center justify-center text-zinc-500" aria-label="Drag to reorder work sessions"><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5"><circle cx="8" cy="5" r="1.7"></circle><circle cx="16" cy="5" r="1.7"></circle><circle cx="8" cy="12" r="1.7"></circle><circle cx="16" cy="12" r="1.7"></circle><circle cx="8" cy="19" r="1.7"></circle><circle cx="16" cy="19" r="1.7"></circle></svg></button><span class="w-7 text-center font-black text-zinc-500">{{ index + 1 }}</span><strong class="min-w-0 flex-1">{{ session.name }}</strong><button class="small-button inline-flex h-9 w-9 items-center justify-center p-0" aria-label="Edit work session" title="Edit work session" @click="editSession(session)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m4 16.5-.7 4.2 4.2-.7L18.8 8.7l-3.5-3.5L4 16.5Z" stroke-linejoin="round"></path><path d="m13.8 6.7 3.5 3.5" stroke-linecap="round"></path></svg></button><button class="small-button text-rose-300" @click="archiveSession(session)">Archive</button></article>
+                        <div class="space-y-2">
+                            <article v-for="(session, index) in activeSessions" :key="session.id" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-4">
+                                <div class="flex items-center gap-3">
+                                    <span class="w-7 text-center font-black text-zinc-500">{{ index + 1 }}</span>
+                                    <div>
+                                        <strong class="text-base text-zinc-100">{{ session.name }}</strong>
+                                        <p class="text-xs text-zinc-500 mt-0.5">{{ sessionTasks(session.id).length }} task{{ sessionTasks(session.id).length === 1 ? '' : 's' }} assigned</p>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <button class="small-button inline-flex h-9 w-9 items-center justify-center p-0" aria-label="Edit work session" title="Edit work session" @click="editSession(session)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path d="m4 16.5-.7 4.2 4.2-.7L18.8 8.7l-3.5-3.5L4 16.5Z" stroke-linejoin="round"></path><path d="m13.8 6.7 3.5 3.5" stroke-linecap="round"></path></svg></button>
+                                    <button class="small-button text-rose-300" @click="archiveSession(session)">Archive</button>
+                                </div>
+                            </article>
                         </div>
                     </div>
 
@@ -1696,13 +1705,40 @@ function chooseAdminDate(date) {
                             <label class="form-label" for="task-name">Task name</label>
                             <input id="task-name" v-model.trim="taskForm.task_name" required maxlength="255" class="field" placeholder="For example, Mop the lobby" v-bind="validationAttrs('task', 'task_name')">
                             <p v-if="errorFor('task', 'task_name')" :id="errorId('task', 'task_name')" class="field-error">{{ errorFor('task', 'task_name') }}</p>
-                            <label class="form-label">Task type<select v-model="taskForm.task_type" class="field" v-bind="validationAttrs('task', 'task_type')"><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
-                            <label class="form-label">Work session<select v-model="taskForm.task_session_id" required class="field" v-bind="validationAttrs('task', 'task_session_id')"><option v-for="session in activeSessions" :key="session.id" :value="session.id">{{ session.name }}</option></select></label>
+
+                            <label class="form-label" for="task-description">
+                                Description / details <span class="font-normal text-zinc-500">(optional)</span>
+                            </label>
+                            <textarea id="task-description" v-model.trim="taskForm.description" rows="3" class="field h-auto py-2" placeholder="Specific guidelines, chemicals, or equipment to use..."></textarea>
+
+                            <label class="form-label">Task schedule type
+                                <select v-model="taskForm.task_type" class="field" v-bind="validationAttrs('task', 'task_type')">
+                                    <option value="daily">Daily (Every active day)</option>
+                                    <option value="weekly">Weekly (Specific day of week)</option>
+                                    <option value="monthly">Monthly (Last Friday of month)</option>
+                                </select>
+                            </label>
+
+                            <label class="form-label">Work session
+                                <select v-model="taskForm.task_session_id" required class="field" v-bind="validationAttrs('task', 'task_session_id')">
+                                    <option v-for="session in activeSessions" :key="session.id" :value="session.id">{{ session.name }}</option>
+                                </select>
+                            </label>
                             <p v-if="errorFor('task', 'task_session_id')" :id="errorId('task', 'task_session_id')" class="field-error">{{ errorFor('task', 'task_session_id') }}</p>
-                            <label v-if="taskForm.task_type === 'weekly'" class="form-label">Weekly due day<select v-model.number="taskForm.due_weekday" class="field" v-bind="validationAttrs('task', 'due_weekday')"><option v-for="day in 5" :key="day" :value="day">{{ weekdayName(day) }}</option></select></label>
+
+                            <label class="form-label" for="task-finish-time">
+                                Finish / due time
+                                <input id="task-finish-time" v-model="taskForm.finish_time" required type="time" class="field" v-bind="validationAttrs('task', 'finish_time')">
+                            </label>
+                            <p v-if="errorFor('task', 'finish_time')" :id="errorId('task', 'finish_time')" class="field-error">{{ errorFor('task', 'finish_time') }}</p>
+
+                            <label v-if="taskForm.task_type === 'weekly'" class="form-label">Weekly due day
+                                <select v-model.number="taskForm.due_weekday" class="field" v-bind="validationAttrs('task', 'due_weekday')">
+                                    <option v-for="day in 5" :key="day" :value="day">{{ weekdayName(day) }}</option>
+                                </select>
+                            </label>
                             <p v-if="errorFor('task', 'due_weekday')" :id="errorId('task', 'due_weekday')" class="field-error">{{ errorFor('task', 'due_weekday') }}</p>
-                            <label class="form-label">Credit hours<input v-model.number="taskForm.credit_hours" required type="number" min="0.25" max="24" step="0.25" class="field" placeholder="For example, 1.5" v-bind="validationAttrs('task', 'credit_hours')"></label>
-                            <p v-if="errorFor('task', 'credit_hours')" :id="errorId('task', 'credit_hours')" class="field-error">{{ errorFor('task', 'credit_hours') }}</p>
+
                             <label class="form-label">Where this task appears<select v-model="taskForm.collection_mode" class="field"><option value="single">One rotation</option><option value="multiple">Selected rotations</option><option value="all">All rotations</option></select></label>
                             <label v-if="taskForm.collection_mode === 'single'" class="form-label">Rotation<select v-model="taskForm.single_collection_id" required class="field" v-bind="validationAttrs('task', 'task_collection_ids')"><option v-for="collection in taskCollections" :key="collection.id" :value="collection.id">{{ collectionDisplayName(collection) }}</option></select></label>
                             <div v-else-if="taskForm.collection_mode === 'multiple'" class="rounded-2xl border border-zinc-700 bg-zinc-900 p-3">
@@ -1710,14 +1746,13 @@ function chooseAdminDate(date) {
                                 <label v-for="collection in taskCollections" :key="collection.id" class="mt-3 flex items-center gap-3 text-sm text-zinc-300"><input v-model="taskForm.task_collection_ids" type="checkbox" :value="collection.id"><span>{{ collectionDisplayName(collection) }}</span></label>
                             </div>
                             <p v-if="errorFor('task', 'task_collection_ids')" :id="errorId('task', 'task_collection_ids')" class="field-error">{{ errorFor('task', 'task_collection_ids') }}</p>
-                            <p class="text-xs text-zinc-500">Single = one rotation.<br>Multiple = selected rotations.<br>All = show the task no matter which rotation is active.</p>
                             <button :disabled="busy" class="primary-button">Add task</button>
                         </form>
                         <div class="space-y-6">
                             <div class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5">
                                 <div>
                                     <h2 class="font-black">Find Tasks</h2>
-                                    <p class="mt-1 text-sm text-zinc-400">Check which rotation a task belongs to before editing it. Tasks that apply to all rotations still show up in every filtered view.</p>
+                                    <p class="mt-1 text-sm text-zinc-400">Search and filter active task templates across sessions and rotations.</p>
                                 </div>
                                 <div class="mt-4 space-y-3">
                                     <div class="relative">
@@ -1757,9 +1792,10 @@ function chooseAdminDate(date) {
                                         <label class="space-y-1 text-xs font-bold text-zinc-400">
                                             <span>Task type</span>
                                             <select v-model="taskListFilters.task_type" class="field">
-                                                <option value="all">Daily and weekly</option>
+                                                <option value="all">All types</option>
                                                 <option value="daily">Daily only</option>
                                                 <option value="weekly">Weekly only</option>
+                                                <option value="monthly">Monthly only</option>
                                             </select>
                                         </label>
                                         <button type="button" class="small-button h-11 px-4 text-xs font-bold" @click="taskListFilters = { collection_id: 'all', task_type: 'all', search: '' }">Reset filters</button>
@@ -1769,14 +1805,19 @@ function chooseAdminDate(date) {
                             <section v-for="(session, index) in activeSessions" :key="session.id">
                                 <header class="mb-2 flex justify-between"><h3 class="font-black uppercase" :class="sessionTone(index)">{{ session.name }}</h3><span class="text-xs text-zinc-500">{{ filteredTaskEditorItemsFor(session.id).length }} task{{ filteredTaskEditorItemsFor(session.id).length === 1 ? '' : 's' }}</span></header>
                                 <div class="space-y-2">
-                                    <article v-for="item in filteredTaskEditorItemsFor(session.id)" :key="`${item.type}:${item.id}`" class="flex items-center justify-between gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-3">
-                                        <div>
+                                    <article v-for="item in filteredTaskEditorItemsFor(session.id)" :key="`${item.type}:${item.id}`" class="flex items-center justify-between gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-3.5">
+                                        <div class="min-w-0 flex-1">
                                             <div class="flex flex-wrap items-center gap-2">
-                                                <p class="text-sm font-semibold">{{ item.taskName }}</p>
-                                                <span class="rounded-full border border-zinc-700 px-2 py-0.5 text-xs font-black uppercase text-zinc-300">{{ taskTypeLabel(item.type) }}</span>
+                                                <p class="text-sm font-semibold text-zinc-100">{{ item.taskName }}</p>
+                                                <span class="rounded-full border px-2 py-0.5 text-xs font-black uppercase" :class="item.type === 'monthly' ? 'border-purple-400/40 bg-purple-400/10 text-purple-300' : (item.type === 'weekly' ? 'border-sky-400/40 bg-sky-400/10 text-sky-300' : 'border-zinc-700 bg-zinc-800 text-zinc-300')">{{ taskTypeLabel(item.type) }}</span>
                                                 <span v-for="collection in taskCollectionPills(item)" :key="`${item.type}:${item.id}:${collection.key}`" class="max-w-40 truncate rounded-full border px-2 py-0.5 text-xs font-black" :class="collection.collectionId ? collectionTone(collection.collectionId) : 'border-zinc-700 bg-zinc-800 text-zinc-300'">{{ collection.name }}</span>
                                             </div>
-                                            <p class="mt-0.5 text-xs text-zinc-500">{{ item.type === 'weekly' ? `${weekdayName(item.dueWeekday)} - ` : '' }}{{ item.creditHours }} hrs</p>
+                                            <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-400">
+                                                <span v-if="item.finishTime" class="font-semibold text-zinc-300">Finish: {{ formatTime12(item.finishTime) }}</span>
+                                                <span v-if="item.type === 'weekly'">• Due {{ weekdayName(item.dueWeekday) }}</span>
+                                                <span v-else-if="item.type === 'monthly'">• Last Friday of month</span>
+                                                <span v-if="item.description" class="text-zinc-500">• {{ item.description.slice(0, 40) }}{{ item.description.length > 40 ? '...' : '' }}</span>
+                                            </div>
                                         </div>
                                         <div class="flex shrink-0 items-center gap-2">
                                             <button class="small-button inline-flex h-9 w-9 items-center justify-center p-0" aria-label="Edit task" title="Edit task" @click="openEdit(item.type, item)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path d="m4 16.5-.7 4.2 4.2-.7L18.8 8.7l-3.5-3.5L4 16.5Z" stroke-linejoin="round"></path><path d="m13.8 6.7 3.5 3.5" stroke-linecap="round"></path></svg></button>
@@ -1791,6 +1832,45 @@ function chooseAdminDate(date) {
                 </section>
             </div>
         </main>
+
+        <!-- Task Details Modal -->
+        <div v-if="viewingTaskDetails" class="modal-backdrop">
+            <div class="modal-card max-w-lg">
+                <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                        <span class="rounded-md border px-2 py-0.5 text-xs font-black uppercase" :class="viewingTaskDetails.isMonthly ? 'border-purple-400/40 bg-purple-400/10 text-purple-300' : (viewingTaskDetails.isWeekly ? 'border-sky-400/40 bg-sky-400/10 text-sky-300' : 'border-zinc-700 bg-zinc-800 text-zinc-300')">{{ taskTypeLabel(viewingTaskDetails.type) }}</span>
+                        <h2 class="mt-2 text-xl font-black text-zinc-100">{{ viewingTaskDetails.text }}</h2>
+                    </div>
+                    <button type="button" class="small-button inline-flex h-9 w-9 shrink-0 items-center justify-center p-0" aria-label="Tutup" title="Tutup" @click="closeTaskDetails">
+                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    </button>
+                </div>
+
+                <div class="mt-4 space-y-3">
+                    <div class="rounded-xl border border-zinc-700 bg-zinc-900/60 p-3.5">
+                        <span class="text-xs font-bold uppercase tracking-wider text-zinc-500">Masa & Jadual Sesi</span>
+                        <p class="mt-1 text-sm font-semibold text-zinc-200">{{ viewingTaskDetails.timeSpanFormatted }}</p>
+                        <p class="mt-0.5 text-xs text-zinc-400">Sesi: {{ viewingTaskDetails.sessionName }}</p>
+                    </div>
+
+                    <div class="rounded-xl border border-zinc-700 bg-zinc-900/60 p-3.5">
+                        <span class="text-xs font-bold uppercase tracking-wider text-zinc-500">Penerangan / Arahan Tugasan</span>
+                        <p v-if="viewingTaskDetails.description" class="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-zinc-200">{{ viewingTaskDetails.description }}</p>
+                        <p v-else class="mt-1 text-xs italic text-zinc-500">Tiada penerangan tambahan untuk tugasan ini.</p>
+                    </div>
+
+                    <div v-if="viewingTaskDetails.isWeekly" class="rounded-xl border border-sky-500/30 bg-sky-500/5 p-3.5 text-xs text-sky-200">
+                        <strong>Tugasan Mingguan:</strong> Perlu diselesaikan sebelum atau pada {{ displayDate(viewingTaskDetails.originalDueDate) }}.
+                    </div>
+
+                    <div v-if="viewingTaskDetails.isMonthly" class="rounded-xl border border-purple-500/30 bg-purple-500/5 p-3.5 text-xs text-purple-200">
+                        <strong>Tugasan Bulanan:</strong> Dijadualkan pada hari Jumaat terakhir setiap bulan.
+                    </div>
+                </div>
+
+                <button type="button" class="primary-button mt-5" @click="closeTaskDetails">Tutup</button>
+            </div>
+        </div>
 
         <div v-if="evidenceTask" class="modal-backdrop">
             <form class="modal-card" @submit.prevent="completeTask">
@@ -1809,7 +1889,7 @@ function chooseAdminDate(date) {
                 </div>
                 <p v-if="errorFor('evidence', 'photos')" :id="errorId('evidence', 'photos')" class="field-error mt-3">{{ errorFor('evidence', 'photos') }}</p>
                 <div v-if="evidencePreviews.length" class="mt-4 grid grid-cols-3 gap-2"><div v-for="(preview, index) in evidencePreviews" :key="preview" class="relative aspect-square overflow-hidden rounded-xl bg-zinc-800"><img :src="preview" alt="Pratonton bukti" class="h-full w-full object-cover"><button type="button" class="absolute right-1 top-1 rounded-full bg-black/75 px-2 py-1 text-xs font-bold" :aria-label="`Buang foto ${index + 1}`" @click="removeEvidence(index)">Buang</button></div></div>
-                <label class="mt-4 block text-sm font-bold">Nota tugasan <span class="font-normal text-zinc-500">(pilihan)</span><textarea v-model.trim="completionNote" maxlength="500" rows="5" class="field mt-2 h-auto pb-3 pt-8" placeholder="Contoh: kawasan ditutup atau bekalan tidak mencukupi" v-bind="validationAttrs('evidence', 'note')"></textarea></label>
+                <label class="mt-4 block text-sm font-bold">Nota tugasan <span class="font-normal text-zinc-500">(pilihan)</span><textarea v-model.trim="completionNote" maxlength="500" rows="3" class="field mt-2 h-auto py-2" placeholder="Contoh: kawasan ditutup atau bekalan tidak mencukupi" v-bind="validationAttrs('evidence', 'note')"></textarea></label>
                 <p v-if="errorFor('evidence', 'note')" :id="errorId('evidence', 'note')" class="field-error">{{ errorFor('evidence', 'note') }}</p>
                 <button :disabled="busy || !evidenceFiles.length" class="primary-button mt-5">Hantar bukti & tandakan selesai</button>
                 <p class="mt-3 text-center text-xs text-amber-300">Tugasan yang selesai tidak boleh dibuka semula oleh cleaner.</p>
@@ -1818,8 +1898,9 @@ function chooseAdminDate(date) {
 
         <div v-if="viewingEvidence" class="modal-backdrop">
             <div class="modal-card max-w-3xl">
-                <div class="flex justify-between gap-3"><div><h2 class="font-black">{{ viewingEvidence.text }}</h2><p class="mt-1 text-xs text-zinc-500">{{ formatTimestamp(viewingEvidence.completedAt) }} - {{ viewingEvidence.creditHours }} hrs</p></div><button type="button" class="small-button inline-flex h-9 w-9 shrink-0 items-center justify-center p-0" aria-label="Close" title="Close" @click="viewingEvidence = null"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path d="M18 6 6 18M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></div>
+                <div class="flex justify-between gap-3"><div><h2 class="font-black">{{ viewingEvidence.text }}</h2><p class="mt-1 text-xs text-zinc-500">{{ formatTimestamp(viewingEvidence.completedAt) }} - {{ viewingEvidence.timeSpanFormatted }}</p></div><button type="button" class="small-button inline-flex h-9 w-9 shrink-0 items-center justify-center p-0" aria-label="Close" title="Close" @click="viewingEvidence = null"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path d="M18 6 6 18M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></div>
                 <p v-if="viewingEvidence.type === 'weekly'" class="mt-3 text-xs text-sky-300">Weekly - due {{ displayAdminDate(viewingEvidence.originalDueDate) }} - final scheduled date {{ displayAdminDate(viewingEvidence.scheduledDate) }}</p>
+                <p v-else-if="viewingEvidence.type === 'monthly'" class="mt-3 text-xs text-purple-300">Monthly - scheduled date {{ displayAdminDate(viewingEvidence.scheduledDate) }}</p>
                 <p v-if="viewingEvidence.completionNote" class="mt-3 rounded-xl border border-zinc-700 bg-zinc-900 p-3 text-sm text-zinc-300">Note: {{ viewingEvidence.completionNote }}</p>
                 <div class="mt-5 grid gap-3 sm:grid-cols-2"><a v-for="photo in viewingEvidence.evidence" :key="photo.id" :href="photo.url" target="_blank" rel="noopener" class="overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900"><img :src="photo.url" loading="lazy" alt="Task evidence photo" class="max-h-96 w-full object-contain"></a></div>
                 <button v-if="viewingEvidence.canReopen" class="small-button mt-5 border-amber-400/50 text-amber-300 transition hover:border-amber-300 hover:bg-amber-400/10 hover:text-amber-200" @click="openReopen(viewingEvidence); viewingEvidence = null">Reopen completed task</button>
@@ -1849,30 +1930,62 @@ function chooseAdminDate(date) {
             </form>
         </div>
 
-        <div v-if="editing || sessionEditing" class="modal-backdrop">
-            <form class="modal-card" @submit.prevent="sessionEditing ? saveSession() : saveEdit()">
-                <div class="flex justify-between"><h2 class="font-black">{{ sessionEditing ? 'Edit Session' : 'Edit Template' }}</h2><button type="button" class="small-button inline-flex h-9 w-9 shrink-0 items-center justify-center p-0" aria-label="Close" title="Close" @click="editing = null; sessionEditing = null"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path d="M18 6 6 18M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></div>
+        <!-- Edit Session Modal -->
+        <div v-if="sessionEditing" class="modal-backdrop">
+            <form class="modal-card" @submit.prevent="saveSession">
+                <div class="flex justify-between"><h2 class="font-black">Edit Work Session</h2><button type="button" class="small-button inline-flex h-9 w-9 shrink-0 items-center justify-center p-0" aria-label="Close" title="Close" @click="sessionEditing = null"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path d="M18 6 6 18M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></div>
                 <div class="mt-5 space-y-3">
-                    <template v-if="sessionEditing">
-                        <label class="form-label">Session name<input v-model.trim="editForm.name" required maxlength="100" class="field" placeholder="For example, 4:00 PM - 6:00 PM" v-bind="validationAttrs('sessionEdit', 'name')"></label>
-                        <p v-if="errorFor('sessionEdit', 'name')" :id="errorId('sessionEdit', 'name')" class="field-error">{{ errorFor('sessionEdit', 'name') }}</p>
-                    </template>
-                    <template v-else>
-                        <div class="form-label"><span>Task type</span><div class="readonly-field" role="note" :aria-label="`Task type: ${editForm.task_type === 'weekly' ? 'Weekly' : 'Daily'}. This cannot be changed after creation.`"><span class="readonly-field__value"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3" stroke-linecap="round"></path></svg>{{ editForm.task_type === 'weekly' ? 'Weekly' : 'Daily' }}</span><span class="readonly-field__badge">Locked</span></div><span class="readonly-field__help">Task type is locked after creation.</span></div>
-                        <label class="form-label">Task name<input v-model.trim="editForm.task_name" required maxlength="255" class="field" placeholder="For example, Mop the lobby" v-bind="validationAttrs('taskEdit', 'task_name')"></label>
-                        <p v-if="errorFor('taskEdit', 'task_name')" :id="errorId('taskEdit', 'task_name')" class="field-error">{{ errorFor('taskEdit', 'task_name') }}</p>
-                        <label class="form-label">Work session<select v-model="editForm.task_session_id" required class="field" v-bind="validationAttrs('taskEdit', 'task_session_id')"><option v-for="session in activeSessions" :key="session.id" :value="session.id">{{ session.name }}</option></select></label>
-                        <label v-if="editForm.task_type === 'weekly'" class="form-label">Weekly due day<select v-model.number="editForm.due_weekday" class="field" v-bind="validationAttrs('taskEdit', 'due_weekday')"><option v-for="day in 5" :key="day" :value="day">{{ weekdayName(day) }}</option></select></label>
-                        <label class="form-label">Where this task appears<select v-model="editForm.collection_mode" class="field"><option value="single">One rotation</option><option value="multiple">Selected rotations</option><option value="all">All rotations</option></select></label>
-                        <label v-if="editForm.collection_mode === 'single'" class="form-label">Rotation<select v-model="editForm.single_collection_id" required class="field" v-bind="validationAttrs('taskEdit', 'task_collection_ids')"><option v-for="collection in taskCollections" :key="collection.id" :value="collection.id">{{ collectionDisplayName(collection) }}</option></select></label>
-                        <div v-else-if="editForm.collection_mode === 'multiple'" class="rounded-2xl border border-zinc-700 bg-zinc-900 p-3">
-                            <p class="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">Choose rotations</p>
-                            <label v-for="collection in taskCollections" :key="collection.id" class="mt-3 flex items-center gap-3 text-sm text-zinc-300"><input v-model="editForm.task_collection_ids" type="checkbox" :value="collection.id"><span>{{ collectionDisplayName(collection) }}</span></label>
-                        </div>
-                        <p v-if="errorFor('taskEdit', 'task_collection_ids')" :id="errorId('taskEdit', 'task_collection_ids')" class="field-error">{{ errorFor('taskEdit', 'task_collection_ids') }}</p>
-                        <label class="form-label">Credit hours<input v-model.number="editForm.credit_hours" required type="number" min="0.25" max="24" step="0.25" class="field" v-bind="validationAttrs('taskEdit', 'credit_hours')"></label>
-                        <p v-if="errorFor('taskEdit', 'credit_hours')" :id="errorId('taskEdit', 'credit_hours')" class="field-error">{{ errorFor('taskEdit', 'credit_hours') }}</p>
-                    </template>
+                    <div class="grid grid-cols-2 gap-2">
+                        <label class="form-label">
+                            Start time
+                            <input v-model="sessionEditForm.start_time" required type="time" class="field" v-bind="validationAttrs('sessionEdit', 'start_time')">
+                        </label>
+                        <label class="form-label">
+                            End time
+                            <input v-model="sessionEditForm.end_time" required type="time" class="field" v-bind="validationAttrs('sessionEdit', 'end_time')">
+                        </label>
+                    </div>
+                    <p v-if="errorFor('sessionEdit', 'start_time')" :id="errorId('sessionEdit', 'start_time')" class="field-error">{{ errorFor('sessionEdit', 'start_time') }}</p>
+                    <p v-if="errorFor('sessionEdit', 'end_time')" :id="errorId('sessionEdit', 'end_time')" class="field-error">{{ errorFor('sessionEdit', 'end_time') }}</p>
+
+                    <div class="rounded-xl border border-zinc-700 bg-zinc-950 p-3 text-xs">
+                        <span class="text-zinc-500 font-bold uppercase tracking-wider block">Formatted name</span>
+                        <strong class="text-sm text-zinc-200 mt-1 block">{{ formatSessionPreview(sessionEditForm.start_time, sessionEditForm.end_time) }}</strong>
+                    </div>
+                </div>
+                <button class="primary-button mt-5">Save changes</button>
+            </form>
+        </div>
+
+        <!-- Edit Task Modal -->
+        <div v-if="editing" class="modal-backdrop">
+            <form class="modal-card" @submit.prevent="saveEdit">
+                <div class="flex justify-between"><h2 class="font-black">Edit Template</h2><button type="button" class="small-button inline-flex h-9 w-9 shrink-0 items-center justify-center p-0" aria-label="Close" title="Close" @click="editing = null"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path d="M18 6 6 18M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></div>
+                <div class="mt-5 space-y-3">
+                    <div class="form-label"><span>Task type</span><div class="readonly-field" role="note" :aria-label="`Task type: ${taskTypeLabel(editForm.task_type)}. This cannot be changed after creation.`"><span class="readonly-field__value"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3" stroke-linecap="round"></path></svg>{{ taskTypeLabel(editForm.task_type) }}</span><span class="readonly-field__badge">Locked</span></div></div>
+                    <label class="form-label">Task name<input v-model.trim="editForm.task_name" required maxlength="255" class="field" placeholder="For example, Mop the lobby" v-bind="validationAttrs('taskEdit', 'task_name')"></label>
+                    <p v-if="errorFor('taskEdit', 'task_name')" :id="errorId('taskEdit', 'task_name')" class="field-error">{{ errorFor('taskEdit', 'task_name') }}</p>
+
+                    <label class="form-label">Description / details <span class="font-normal text-zinc-500">(optional)</span>
+                        <textarea v-model.trim="editForm.description" rows="3" class="field h-auto py-2" placeholder="Specific guidelines..."></textarea>
+                    </label>
+
+                    <label class="form-label">Work session<select v-model="editForm.task_session_id" required class="field" v-bind="validationAttrs('taskEdit', 'task_session_id')"><option v-for="session in activeSessions" :key="session.id" :value="session.id">{{ session.name }}</option></select></label>
+                    <p v-if="errorFor('taskEdit', 'task_session_id')" :id="errorId('taskEdit', 'task_session_id')" class="field-error">{{ errorFor('taskEdit', 'task_session_id') }}</p>
+
+                    <label class="form-label">Finish / due time
+                        <input v-model="editForm.finish_time" required type="time" class="field" v-bind="validationAttrs('taskEdit', 'finish_time')">
+                    </label>
+                    <p v-if="errorFor('taskEdit', 'finish_time')" :id="errorId('taskEdit', 'finish_time')" class="field-error">{{ errorFor('taskEdit', 'finish_time') }}</p>
+
+                    <label v-if="editForm.task_type === 'weekly'" class="form-label">Weekly due day<select v-model.number="editForm.due_weekday" class="field" v-bind="validationAttrs('taskEdit', 'due_weekday')"><option v-for="day in 5" :key="day" :value="day">{{ weekdayName(day) }}</option></select></label>
+                    <label class="form-label">Where this task appears<select v-model="editForm.collection_mode" class="field"><option value="single">One rotation</option><option value="multiple">Selected rotations</option><option value="all">All rotations</option></select></label>
+                    <label v-if="editForm.collection_mode === 'single'" class="form-label">Rotation<select v-model="editForm.single_collection_id" required class="field" v-bind="validationAttrs('taskEdit', 'task_collection_ids')"><option v-for="collection in taskCollections" :key="collection.id" :value="collection.id">{{ collectionDisplayName(collection) }}</option></select></label>
+                    <div v-else-if="editForm.collection_mode === 'multiple'" class="rounded-2xl border border-zinc-700 bg-zinc-900 p-3">
+                        <p class="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">Choose rotations</p>
+                        <label v-for="collection in taskCollections" :key="collection.id" class="mt-3 flex items-center gap-3 text-sm text-zinc-300"><input v-model="editForm.task_collection_ids" type="checkbox" :value="collection.id"><span>{{ collectionDisplayName(collection) }}</span></label>
+                    </div>
+                    <p v-if="errorFor('taskEdit', 'task_collection_ids')" :id="errorId('taskEdit', 'task_collection_ids')" class="field-error">{{ errorFor('taskEdit', 'task_collection_ids') }}</p>
                 </div>
                 <button class="primary-button mt-5">Save changes</button>
             </form>
@@ -1911,7 +2024,6 @@ select.field {
 .readonly-field__value { display: inline-flex; min-width: 0; align-items: center; gap: .5rem; font-size: .875rem; font-weight: 650; }
 .readonly-field__value svg { width: 1rem; height: 1rem; color: rgb(161 161 170); }
 .readonly-field__badge { border: 1px solid rgb(82 82 91); border-radius: 9999px; padding: .125rem .45rem; color: rgb(161 161 170); font-size: .625rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
-.readonly-field__help { color: rgb(161 161 170); font-size: .6875rem; font-weight: 500; line-height: 1.25; }
 .field-error { color: #fda4af; font-size: .8125rem; font-weight: 600; line-height: 1.35; }
 .primary-button { width: 100%; height: 2.75rem; border-radius: .75rem; background: linear-gradient(to right, #ED4264, #FFEDBC); color: #18181b; font-size: .875rem; font-weight: 560; }
 .primary-button:disabled { opacity: .5; }
@@ -1968,7 +2080,8 @@ select.field {
 .theme-light [class*="text-emerald-100"], .theme-light [class*="text-emerald-300"] { color: #047857; }
 .theme-light [class*="text-amber-300"] { color: #a16207; }
 .theme-light [class*="text-sky-300"] { color: #0369a1; }
-.theme-light [class*="text-violet-300"] { color: #6d28d9; }
+.theme-light [class*="text-violet-300"],
+.theme-light [class*="text-purple-300"] { color: #6d28d9; }
 .theme-light [class*="border-zinc-600"] { border-color: #a1a1aa; }
 .theme-light [class*="border-zinc-700"], .theme-light [class*="border-zinc-800"] { border-color: #d4d4d8; }
 .theme-light .field,
@@ -1987,8 +2100,7 @@ select.field {
 }
 .theme-light .readonly-field { background-color: #f8fafc; border-color: #cbd5e1; color: #334155; }
 .theme-light .readonly-field__value svg,
-.theme-light .readonly-field__badge,
-.theme-light .readonly-field__help { color: #64748b; }
+.theme-light .readonly-field__badge { color: #64748b; }
 .theme-light .readonly-field__badge { border-color: #cbd5e1; background-color: #fff; }
 .theme-light .form-label,
 .theme-light .sunday-date-picker__label { color: #334155; }

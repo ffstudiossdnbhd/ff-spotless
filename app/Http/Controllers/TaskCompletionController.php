@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\CompleteTaskRequest;
 use App\Models\DailyChecklist;
+use App\Models\MonthlyTaskOccurrence;
 use App\Models\WeeklyTaskOccurrence;
 use App\Services\TaskCompletionService;
 
@@ -21,6 +22,14 @@ class TaskCompletionController extends Controller
     {
         $data = $request->validated();
         $service->completeWeekly($weeklyTaskOccurrence, $data['date'], $request->file('photos', []), $data['note'] ?? null);
+
+        return to_route('checklist.index', ['date' => $data['date']]);
+    }
+
+    public function monthly(CompleteTaskRequest $request, MonthlyTaskOccurrence $monthlyTaskOccurrence, TaskCompletionService $service)
+    {
+        $data = $request->validated();
+        $service->completeMonthly($monthlyTaskOccurrence, $data['date'], $request->file('photos', []), $data['note'] ?? null);
 
         return to_route('checklist.index', ['date' => $data['date']]);
     }

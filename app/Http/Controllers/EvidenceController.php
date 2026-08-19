@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\DailyTaskEvidence;
+use App\Models\MonthlyTaskEvidence;
 use App\Models\WeeklyTaskEvidence;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -15,6 +16,11 @@ class EvidenceController extends Controller
     }
 
     public function weekly(WeeklyTaskEvidence $evidence): StreamedResponse
+    {
+        return $this->response($evidence->disk, $evidence->path, $evidence->mime_type);
+    }
+
+    public function monthly(MonthlyTaskEvidence $evidence): StreamedResponse
     {
         return $this->response($evidence->disk, $evidence->path, $evidence->mime_type);
     }

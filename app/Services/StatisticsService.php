@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\DailyChecklist;
+use App\Models\MonthlyTaskOccurrence;
 use App\Models\WeeklyTaskOccurrence;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
@@ -12,6 +13,7 @@ class StatisticsService
     public function __construct(
         private readonly ChecklistMaterializer $daily,
         private readonly WeeklyTaskScheduler $weekly,
+        private readonly MonthlyTaskScheduler $monthly,
         private readonly OperationalDate $dates,
         private readonly OfficeCalendar $calendar,
     ) {}
@@ -25,6 +27,7 @@ class StatisticsService
     {
         $this->daily->catchUpThrough($this->dates->today());
         $this->weekly->advanceThrough($this->dates->today());
+        $this->monthly->advanceThrough($this->dates->today());
 
         $today = $this->dates->today();
         $queryFrom = $from;
@@ -34,7 +37,20 @@ class StatisticsService
             ->whereDate('date', '>=', $queryFrom->toDateString())
             ->whereDate('date', '<=', $queryTo->toDateString())
             ->get();
+
         $weekly = WeeklyTaskOccurrence::query()
+            ->where(function ($query) use ($queryFrom, $queryTo): void {
+                $query->where(function ($scheduled) use ($queryFrom, $queryTo): void {
+                    $scheduled->whereDate('scheduled_date', '>=', $queryFrom->toDateString())
+                        ->whereDate('scheduled_date', '<=', $queryTo->toDateString());
+                })->orWhere(function ($completed) use ($queryFrom, $queryTo): void {
+                    $completed->whereDate('completed_on', '>=', $queryFrom->toDateString())
+                        ->whereDate('completed_on', '<=', $queryTo->toDateString());
+                });
+            })
+            ->get();
+
+        $monthly = MonthlyTaskOccurrence::query()
             ->where(function ($query) use ($queryFrom, $queryTo): void {
                 $query->where(function ($scheduled) use ($queryFrom, $queryTo): void {
                     $scheduled->whereDate('scheduled_date', '>=', $queryFrom->toDateString())
@@ -52,7 +68,12 @@ class StatisticsService
             ->filter(static fn (WeeklyTaskOccurrence $task): bool => $task->completed_on !== null)
             ->groupBy(static fn (WeeklyTaskOccurrence $task): string => $task->completed_on->toDateString());
 
-        $rowForDate = function (CarbonImmutable $cursor) use ($dailyByDate, $weeklyByScheduledDate, $weeklyByCompletedDate, $today): array {
+        $monthlyByScheduledDate = $monthly->groupBy(static fn (MonthlyTaskOccurrence $task): string => $task->scheduled_date->toDateString());
+        $monthlyByCompletedDate = $monthly
+            ->filter(static fn (MonthlyTaskOccurrence $task): bool => $task->completed_on !== null)
+            ->groupBy(static fn (MonthlyTaskOccurrence $task): string => $task->completed_on->toDateString());
+
+        $rowForDate = function (CarbonImmutable $cursor) use ($dailyByDate, $weeklyByScheduledDate, $weeklyByCompletedDate, $monthlyByScheduledDate, $monthlyByCompletedDate, $today): array {
             $date = $cursor->toDateString();
             $row = ['date' => $date, 'completed' => 0, 'missed' => 0, 'pending' => 0];
 
@@ -75,6 +96,20 @@ class StatisticsService
             }
 
             foreach ($weeklyByCompletedDate->get($date, []) as $task) {
+                if ($task->status === 'completed') {
+                    $row['completed']++;
+                }
+            }
+
+            foreach ($monthlyByScheduledDate->get($date, []) as $task) {
+                if ($task->status === 'missed') {
+                    $row['missed']++;
+                } elseif ($task->status === 'pending') {
+                    $row['pending']++;
+                }
+            }
+
+            foreach ($monthlyByCompletedDate->get($date, []) as $task) {
                 if ($task->status === 'completed') {
                     $row['completed']++;
                 }
@@ -115,5 +150,4 @@ class StatisticsService
             'trend' => $trend,
         ];
     }
-
 }

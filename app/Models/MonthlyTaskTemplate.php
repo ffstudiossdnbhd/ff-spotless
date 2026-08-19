@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-class WeeklyTaskTemplate extends Model
+class MonthlyTaskTemplate extends Model
 {
     protected $fillable = [
         'task_name',
@@ -16,7 +16,6 @@ class WeeklyTaskTemplate extends Model
         'task_session_id',
         'task_collection_id',
         'applies_to_all_collections',
-        'due_weekday',
         'finish_time',
         'sort_order',
         'starts_on',
@@ -26,9 +25,9 @@ class WeeklyTaskTemplate extends Model
     protected function casts(): array
     {
         return [
+            'task_session_id' => 'integer',
             'task_collection_id' => 'integer',
             'applies_to_all_collections' => 'boolean',
-            'due_weekday' => 'integer',
             'sort_order' => 'integer',
             'starts_on' => 'immutable_date',
             'is_active' => 'boolean',
@@ -52,11 +51,11 @@ class WeeklyTaskTemplate extends Model
 
     public function taskCollections(): BelongsToMany
     {
-        return $this->belongsToMany(TaskCollection::class, 'weekly_task_template_task_collection');
+        return $this->belongsToMany(TaskCollection::class, 'monthly_task_template_task_collection');
     }
 
     public function occurrences(): HasMany
     {
-        return $this->hasMany(WeeklyTaskOccurrence::class);
+        return $this->hasMany(MonthlyTaskOccurrence::class);
     }
 }

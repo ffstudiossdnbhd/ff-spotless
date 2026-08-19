@@ -7,7 +7,7 @@ use App\Models\TaskSession;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Validator;
 
-class StoreTaskTemplateRequest extends FormRequest
+class StoreMonthlyTaskTemplateRequest extends FormRequest
 {
     use SanitizesPlainText;
 
@@ -32,9 +32,6 @@ class StoreTaskTemplateRequest extends FormRequest
         ]);
     }
 
-    /**
-     * @return array<string, array<int, mixed>>
-     */
     public function rules(): array
     {
         return [
@@ -77,17 +74,12 @@ class StoreTaskTemplateRequest extends FormRequest
         });
     }
 
-    /**
-     * @return array<string, string>
-     */
     public function messages(): array
     {
         return [
             'task_name.required' => 'Task name is required.',
-            'task_name.string' => 'Task name must be text.',
             'task_name.max' => 'Task name must not exceed 255 characters.',
             'task_session_id.required' => 'Task session is required.',
-            'task_session_id.integer' => 'Task session is invalid.',
             'task_session_id.exists' => 'Task session was not found.',
             'task_collection_ids.array' => 'Task collections are invalid.',
             'task_collection_ids.*.integer' => 'A task collection is invalid.',

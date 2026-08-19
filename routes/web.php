@@ -5,10 +5,10 @@ use App\Http\Controllers\AdminPublicHolidayController;
 use App\Http\Controllers\AdminSessionController;
 use App\Http\Controllers\AdminTaskReopenController;
 use App\Http\Controllers\ChecklistController;
-use App\Http\Controllers\ChecklistOrderController;
 use App\Http\Controllers\DayAvailabilityController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\EvidenceController;
+use App\Http\Controllers\MonthlyTaskTemplateController;
 use App\Http\Controllers\TaskCompletionController;
 use App\Http\Controllers\TaskCollectionController;
 use App\Http\Controllers\TaskCollectionScheduleController;
@@ -29,12 +29,12 @@ Route::post('/tasks/daily/{dailyChecklist}/complete', [TaskCompletionController:
 Route::post('/tasks/weekly/{weeklyTaskOccurrence}/complete', [TaskCompletionController::class, 'weekly'])
     ->middleware('throttle:10,1')
     ->name('tasks.weekly.complete');
+Route::post('/tasks/monthly/{monthlyTaskOccurrence}/complete', [TaskCompletionController::class, 'monthly'])
+    ->middleware('throttle:10,1')
+    ->name('tasks.monthly.complete');
 Route::post('/checklist/availability', [DayAvailabilityController::class, 'store'])
     ->middleware('throttle:10,1')
     ->name('checklist.availability');
-Route::post('/checklist/order', [ChecklistOrderController::class, 'store'])
-    ->middleware('throttle:30,1')
-    ->name('checklist.order');
 
 Route::post('/admin/login', [AdminSessionController::class, 'store'])
     ->middleware('throttle:60,1')
@@ -56,12 +56,16 @@ Route::middleware(EnsureMasterAdmin::class)->prefix('admin')->name('admin.')->gr
     Route::post('/weekly-templates', [WeeklyTaskTemplateController::class, 'store'])->name('weekly-templates.store');
     Route::patch('/weekly-templates/{weeklyTaskTemplate}', [WeeklyTaskTemplateController::class, 'update'])->name('weekly-templates.update');
     Route::delete('/weekly-templates/{weeklyTaskTemplate}', [WeeklyTaskTemplateController::class, 'destroy'])->name('weekly-templates.destroy');
+    Route::post('/monthly-templates', [MonthlyTaskTemplateController::class, 'store'])->name('monthly-templates.store');
+    Route::patch('/monthly-templates/{monthlyTaskTemplate}', [MonthlyTaskTemplateController::class, 'update'])->name('monthly-templates.update');
+    Route::delete('/monthly-templates/{monthlyTaskTemplate}', [MonthlyTaskTemplateController::class, 'destroy'])->name('monthly-templates.destroy');
     Route::post('/sessions', [TaskSessionManagementController::class, 'store'])->name('sessions.store');
-    Route::patch('/sessions/reorder', [TaskSessionManagementController::class, 'reorder'])->name('sessions.reorder');
     Route::patch('/sessions/{taskSession}', [TaskSessionManagementController::class, 'update'])->name('sessions.update');
     Route::delete('/sessions/{taskSession}', [TaskSessionManagementController::class, 'destroy'])->name('sessions.destroy');
     Route::get('/evidence/daily/{evidence}', [EvidenceController::class, 'daily'])->name('evidence.daily');
     Route::get('/evidence/weekly/{evidence}', [EvidenceController::class, 'weekly'])->name('evidence.weekly');
+    Route::get('/evidence/monthly/{evidence}', [EvidenceController::class, 'monthly'])->name('evidence.monthly');
     Route::patch('/tasks/daily/{dailyChecklist}/reopen', [AdminTaskReopenController::class, 'daily'])->name('tasks.daily.reopen');
     Route::patch('/tasks/weekly/{weeklyTaskOccurrence}/reopen', [AdminTaskReopenController::class, 'weekly'])->name('tasks.weekly.reopen');
+    Route::patch('/tasks/monthly/{monthlyTaskOccurrence}/reopen', [AdminTaskReopenController::class, 'monthly'])->name('tasks.monthly.reopen');
 });

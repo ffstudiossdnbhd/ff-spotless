@@ -68,9 +68,10 @@ class ChecklistMaterializer
                     'date' => $dateString,
                     'task_template_id' => $template->id,
                     'task_name' => $template->task_name,
+                    'description' => $template->description,
                     'task_session_id' => $template->task_session_id,
                     'session_name' => $template->taskSession->name,
-                    'credit_hours' => $template->credit_hours,
+                    'finish_time' => $template->finish_time,
                     'is_completed' => false,
                     'completed_at' => null,
                     'completed_by_user_id' => null,
@@ -121,11 +122,12 @@ class ChecklistMaterializer
     public function updateTemplateAndCurrentAndFutureIncompleteSnapshots(
         TaskTemplate $template,
         string $taskName,
+        ?string $description,
         int $sessionId,
         string $sessionName,
-        string $creditHours,
+        string $finishTime,
     ): bool {
-        return DB::transaction(function () use ($template, $taskName, $sessionId, $creditHours): bool {
+        return DB::transaction(function () use ($template, $taskName, $description, $sessionId, $finishTime): bool {
             $this->acquireTemplateSynchronizationLock();
             $lockedTemplate = TaskTemplate::query()->lockForUpdate()->findOrFail($template->getKey());
 
@@ -135,8 +137,9 @@ class ChecklistMaterializer
 
             $lockedTemplate->forceFill([
                 'task_name' => $taskName,
+                'description' => $description,
                 'task_session_id' => $sessionId,
-                'credit_hours' => $creditHours,
+                'finish_time' => $finishTime,
             ])->save();
 
             return true;
@@ -229,11 +232,6 @@ class ChecklistMaterializer
                 ->pluck('id');
 
             if ($staleIds->isNotEmpty()) {
-                DB::table('checklist_item_positions')
-                    ->where('item_type', 'daily')
-                    ->whereIn('item_id', $staleIds)
-                    ->delete();
-
                 DailyChecklist::query()->whereKey($staleIds)->delete();
             }
 
@@ -242,18 +240,12 @@ class ChecklistMaterializer
 
                 if ($existing instanceof DailyChecklist) {
                     if (! $existing->is_completed) {
-                        if ($existing->task_session_id !== $template->task_session_id) {
-                            DB::table('checklist_item_positions')
-                                ->where('item_type', 'daily')
-                                ->where('item_id', $existing->id)
-                                ->delete();
-                        }
-
                         $existing->forceFill([
                             'task_name' => $template->task_name,
+                            'description' => $template->description,
                             'task_session_id' => $template->task_session_id,
                             'session_name' => $template->taskSession->name,
-                            'credit_hours' => $template->credit_hours,
+                            'finish_time' => $template->finish_time,
                         ])->save();
                     }
 
@@ -264,9 +256,10 @@ class ChecklistMaterializer
                     'date' => $dateString,
                     'task_template_id' => $template->id,
                     'task_name' => $template->task_name,
+                    'description' => $template->description,
                     'task_session_id' => $template->task_session_id,
                     'session_name' => $template->taskSession->name,
-                    'credit_hours' => $template->credit_hours,
+                    'finish_time' => $template->finish_time,
                     'is_completed' => false,
                     'completed_at' => null,
                     'completed_by_user_id' => null,
@@ -315,11 +308,6 @@ class ChecklistMaterializer
             if ($ids->isEmpty()) {
                 return;
             }
-
-            DB::table('checklist_item_positions')
-                ->where('item_type', 'daily')
-                ->whereIn('item_id', $ids)
-                ->delete();
 
             DailyChecklist::query()->whereKey($ids)->delete();
         }, 3);

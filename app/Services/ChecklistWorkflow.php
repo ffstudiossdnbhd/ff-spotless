@@ -9,10 +9,11 @@ class ChecklistWorkflow
     public function __construct(
         private readonly ChecklistMaterializer $daily,
         private readonly WeeklyTaskScheduler $weekly,
+        private readonly MonthlyTaskScheduler $monthly,
     ) {}
 
     /**
-     * @return array{daily: \Illuminate\Database\Eloquent\Collection, weekly: \Illuminate\Database\Eloquent\Collection}
+     * @return array{daily: \Illuminate\Database\Eloquent\Collection, weekly: \Illuminate\Database\Eloquent\Collection, monthly: \Illuminate\Database\Eloquent\Collection}
      */
     public function forDate(CarbonImmutable $date): array
     {
@@ -20,10 +21,12 @@ class ChecklistWorkflow
         $catchUpDate = $date->lessThan($today) ? $date : $today;
         $this->daily->catchUpThrough($catchUpDate);
         $this->weekly->advanceThrough($catchUpDate);
+        $this->monthly->advanceThrough($catchUpDate);
 
         return [
             'daily' => $this->daily->forDate($date),
             'weekly' => $this->weekly->forChecklistDate($date),
+            'monthly' => $this->monthly->forChecklistDate($date),
         ];
     }
 }

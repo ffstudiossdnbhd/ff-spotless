@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\ReopenTaskRequest;
 use App\Models\DailyChecklist;
+use App\Models\MonthlyTaskOccurrence;
 use App\Models\WeeklyTaskOccurrence;
 use App\Services\TaskReopenService;
 
@@ -19,6 +20,13 @@ class AdminTaskReopenController extends Controller
     public function weekly(ReopenTaskRequest $request, WeeklyTaskOccurrence $weeklyTaskOccurrence, TaskReopenService $service)
     {
         $service->reopenWeekly($weeklyTaskOccurrence, $request->validated('reason'));
+
+        return to_route('admin.index');
+    }
+
+    public function monthly(ReopenTaskRequest $request, MonthlyTaskOccurrence $monthlyTaskOccurrence, TaskReopenService $service)
+    {
+        $service->reopenMonthly($monthlyTaskOccurrence, $request->validated('reason'));
 
         return to_route('admin.index');
     }

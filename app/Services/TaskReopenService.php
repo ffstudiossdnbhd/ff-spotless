@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Models\DailyChecklist;
 use App\Models\DailyTaskEvidence;
+use App\Models\MonthlyTaskEvidence;
+use App\Models\MonthlyTaskOccurrence;
 use App\Models\TaskReopenAudit;
 use App\Models\WeeklyTaskEvidence;
 use App\Models\WeeklyTaskOccurrence;
@@ -102,6 +104,48 @@ class TaskReopenService
         }, 3);
     }
 
+    public function reopenMonthly(MonthlyTaskOccurrence $task, string $reason): void
+    {
+        $reason = trim($reason);
+
+        DB::transaction(function () use ($task, $reason): void {
+            $locked = MonthlyTaskOccurrence::query()->lockForUpdate()->findOrFail($task->id);
+            $today = $this->dates->today();
+
+            if ($locked->status !== 'completed') {
+                throw ValidationException::withMessages(['task' => 'Only completed tasks can be reopened.']);
+            }
+
+            if (! $locked->month_start->isSameMonth($today)) {
+                throw ValidationException::withMessages(['task' => 'A monthly task can only be reopened during its current month.']);
+            }
+
+            $now = $this->dates->nowUtc();
+            $evidenceCount = $this->invalidateMonthlyEvidence($locked, $reason, $now);
+            $this->writeAudit(
+                taskType: 'monthly',
+                taskId: $locked->id,
+                taskName: $locked->task_name,
+                sessionName: $locked->session_name,
+                taskDate: ($locked->completed_on ?? $today)->toDateString(),
+                completedAt: $locked->completed_at,
+                completionNote: $locked->completion_note,
+                evidenceCount: $evidenceCount,
+                reason: $reason,
+                occurredAt: $now,
+                subject: $locked,
+            );
+
+            $locked->forceFill([
+                'status' => 'pending',
+                'missed_reason' => null,
+                'completed_at' => null,
+                'completed_on' => null,
+                'completion_note' => null,
+            ])->save();
+        }, 3);
+    }
+
     private function invalidateDailyEvidence(DailyChecklist $task, string $reason, $now): int
     {
         $query = DailyTaskEvidence::query()
@@ -134,6 +178,22 @@ class TaskReopenService
         return $count;
     }
 
+    private function invalidateMonthlyEvidence(MonthlyTaskOccurrence $task, string $reason, $now): int
+    {
+        $query = MonthlyTaskEvidence::query()
+            ->where('monthly_task_occurrence_id', $task->id)
+            ->whereNull('invalidated_at');
+        $count = $query->count();
+
+        $query->update([
+            'invalidated_at' => $now,
+            'invalidated_by' => self::ADMIN_LABEL,
+            'invalidation_reason' => $reason,
+        ]);
+
+        return $count;
+    }
+
     private function writeAudit(
         string $taskType,
         int $taskId,
@@ -145,7 +205,7 @@ class TaskReopenService
         int $evidenceCount,
         string $reason,
         $occurredAt,
-        DailyChecklist|WeeklyTaskOccurrence $subject,
+        DailyChecklist|WeeklyTaskOccurrence|MonthlyTaskOccurrence $subject,
     ): void {
         TaskReopenAudit::query()->create([
             'task_type' => $taskType,

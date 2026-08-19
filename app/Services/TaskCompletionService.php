@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\ChecklistDayStatus;
 use App\Models\DailyChecklist;
 use App\Models\DailyTaskEvidence;
+use App\Models\MonthlyTaskEvidence;
+use App\Models\MonthlyTaskOccurrence;
 use App\Models\WeeklyTaskEvidence;
 use App\Models\WeeklyTaskOccurrence;
 use Illuminate\Http\UploadedFile;
@@ -20,6 +22,7 @@ class TaskCompletionService
         private readonly OperationalDate $dates,
         private readonly OfficeCalendar $calendar,
         private readonly WeeklyTaskScheduler $weekly,
+        private readonly MonthlyTaskScheduler $monthly,
         private readonly ChecklistMaterializer $materializer,
         private readonly EvidenceWatermarker $watermarker,
         private readonly AuditLogger $audits,
@@ -127,6 +130,64 @@ class TaskCompletionService
 
                 $this->audits->cleaner('task.completed', $locked, [
                     'task_type' => 'weekly',
+                    'task_name' => $locked->task_name,
+                    'task_date' => $date,
+                ]);
+            }, 3);
+        } catch (Throwable $exception) {
+            $this->deleteStored($storedPaths);
+            throw $exception;
+        }
+    }
+
+    /**
+     * @param  list<UploadedFile>  $photos
+     */
+    public function completeMonthly(MonthlyTaskOccurrence $occurrence, string $date, array $photos, ?string $note = null): void
+    {
+        $this->assertWritableDate($date);
+        $note = $this->normaliseNote($note);
+        $today = $this->dates->fromDateString($date);
+        $this->monthly->advanceThrough($today);
+        $storedPaths = [];
+
+        try {
+            DB::transaction(function () use ($occurrence, $date, $photos, $note, &$storedPaths): void {
+                $this->materializer->acquireTemplateSynchronizationLock();
+                $this->assertAvailableDate($date);
+                $locked = MonthlyTaskOccurrence::query()->lockForUpdate()->findOrFail($occurrence->id);
+
+                $today = $this->dates->today();
+                $isCurrentMonth = ! $locked->month_start->greaterThan($today)
+                    && ! $locked->month_start->endOfMonth()->lessThan($today);
+                $isCarryoverDueToday = $locked->scheduled_date->isSameDay($today)
+                    && $locked->month_start->lessThan($today->startOfMonth());
+
+                if ($locked->status !== 'pending' || (! $isCurrentMonth && ! $isCarryoverDueToday)) {
+                    throw ValidationException::withMessages(['task' => 'Tugasan bulanan ini tidak boleh diselesaikan pada hari ini.']);
+                }
+
+                $completedAt = $this->dates->nowUtc();
+                $watermarkText = $completedAt->setTimezone($this->dates->timezone())->format('d/m/Y H:i');
+
+                foreach ($photos as $photo) {
+                    $stored = $this->storePhoto($photo, $date, 'monthly', $watermarkText);
+                    $storedPaths[] = $stored['path'];
+                    MonthlyTaskEvidence::query()->create([
+                        'monthly_task_occurrence_id' => $locked->id,
+                        ...$stored,
+                    ]);
+                }
+
+                $locked->forceFill([
+                    'status' => 'completed',
+                    'completed_at' => $completedAt,
+                    'completed_on' => $date,
+                    'completion_note' => $note,
+                ])->save();
+
+                $this->audits->cleaner('task.completed', $locked, [
+                    'task_type' => 'monthly',
                     'task_name' => $locked->task_name,
                     'task_date' => $date,
                 ]);

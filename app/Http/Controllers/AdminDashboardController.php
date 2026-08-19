@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Exceptions\ChecklistDateOutsideMaterializationWindow;
 use App\Http\Requests\AdminHistoryRequest;
+use App\Models\MonthlyTaskTemplate;
 use App\Models\TaskCollection;
 use App\Models\TaskCollectionSchedule;
 use App\Models\TaskTemplate;
@@ -61,6 +62,13 @@ class AdminDashboardController extends Controller
             ->orderBy('id')
             ->get();
 
+        $monthlyTemplates = MonthlyTaskTemplate::query()
+            ->active()
+            ->with(['taskSession:id,name', 'taskCollections:id,name'])
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get();
+
         $collections = TaskCollection::query()
             ->orderByDesc('is_default')
             ->orderBy('rotation_order')
@@ -83,6 +91,7 @@ class AdminDashboardController extends Controller
             $date,
             $templates,
             $weeklyTemplates,
+            $monthlyTemplates,
             $collections,
             $collectionSchedules,
             $publicHolidays,

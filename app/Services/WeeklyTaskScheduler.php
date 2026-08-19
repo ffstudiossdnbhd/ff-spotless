@@ -71,11 +71,6 @@ class WeeklyTaskScheduler
                     : $staleQuery->whereNotIn('weekly_task_template_id', $templates->pluck('id'))->pluck('id');
 
                 if ($staleIds->isNotEmpty()) {
-                    DB::table('checklist_item_positions')
-                        ->where('item_type', 'weekly')
-                        ->whereIn('item_id', $staleIds)
-                        ->delete();
-
                     WeeklyTaskPostponement::query()
                         ->whereIn('weekly_task_occurrence_id', $staleIds)
                         ->delete();
@@ -256,10 +251,6 @@ class WeeklyTaskScheduler
                 ->where('status', 'pending')
                 ->whereDate('week_start', '>=', $this->dates->today()->startOfWeek()->toDateString())
                 ->pluck('id');
-            DB::table('checklist_item_positions')
-                ->where('item_type', 'weekly')
-                ->whereIn('item_id', $occurrenceIds)
-                ->delete();
             $template->occurrences()
                 ->whereKey($occurrenceIds)
                 ->delete();
@@ -334,8 +325,9 @@ class WeeklyTaskScheduler
                 'weekly_task_template_id' => $template->id,
                 'task_session_id' => $template->task_session_id,
                 'task_name' => $template->task_name,
+                'description' => $template->description,
                 'session_name' => $template->taskSession->name,
-                'credit_hours' => $template->credit_hours,
+                'finish_time' => $template->finish_time,
                 'original_due_date' => $dueDate->toDateString(),
                 'scheduled_date' => $dueDate->toDateString(),
                 'status' => 'pending',
@@ -350,18 +342,12 @@ class WeeklyTaskScheduler
 
         $dueChanged = ! $existing->original_due_date->isSameDay($dueDate);
 
-        if ($existing->task_session_id !== $template->task_session_id) {
-            DB::table('checklist_item_positions')
-                ->where('item_type', 'weekly')
-                ->where('item_id', $existing->id)
-                ->delete();
-        }
-
         $changes = [
             'task_name' => $template->task_name,
+            'description' => $template->description,
             'task_session_id' => $template->task_session_id,
             'session_name' => $template->taskSession->name,
-            'credit_hours' => $template->credit_hours,
+            'finish_time' => $template->finish_time,
             'original_due_date' => $dueDate->toDateString(),
         ];
 

@@ -6,11 +6,11 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-class WeeklyTaskOccurrence extends Model
+class MonthlyTaskOccurrence extends Model
 {
     protected $fillable = [
-        'week_start',
-        'weekly_task_template_id',
+        'month_start',
+        'monthly_task_template_id',
         'task_session_id',
         'task_name',
         'description',
@@ -29,7 +29,7 @@ class WeeklyTaskOccurrence extends Model
     protected function casts(): array
     {
         return [
-            'week_start' => 'immutable_date',
+            'month_start' => 'immutable_date',
             'original_due_date' => 'immutable_date',
             'scheduled_date' => 'immutable_date',
             'completed_at' => 'immutable_datetime',
@@ -39,7 +39,7 @@ class WeeklyTaskOccurrence extends Model
 
     public function template(): BelongsTo
     {
-        return $this->belongsTo(WeeklyTaskTemplate::class, 'weekly_task_template_id');
+        return $this->belongsTo(MonthlyTaskTemplate::class, 'monthly_task_template_id');
     }
 
     public function completedBy(): BelongsTo
@@ -54,11 +54,11 @@ class WeeklyTaskOccurrence extends Model
 
     public function postponements(): HasMany
     {
-        return $this->hasMany(WeeklyTaskPostponement::class);
+        return $this->hasMany(MonthlyTaskPostponement::class);
     }
 
     public function evidence(): HasMany
     {
-        return $this->hasMany(WeeklyTaskEvidence::class)->whereNull('invalidated_at');
+        return $this->hasMany(MonthlyTaskEvidence::class)->whereNull('invalidated_at');
     }
 }

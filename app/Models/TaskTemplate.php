@@ -17,10 +17,11 @@ class TaskTemplate extends Model
      */
     protected $fillable = [
         'task_name',
+        'description',
         'task_session_id',
         'task_collection_id',
         'applies_to_all_collections',
-        'credit_hours',
+        'finish_time',
         'sort_order',
         'is_active',
     ];
@@ -34,7 +35,6 @@ class TaskTemplate extends Model
             'task_session_id' => 'integer',
             'task_collection_id' => 'integer',
             'applies_to_all_collections' => 'boolean',
-            'credit_hours' => 'decimal:2',
             'sort_order' => 'integer',
             'is_active' => 'boolean',
         ];

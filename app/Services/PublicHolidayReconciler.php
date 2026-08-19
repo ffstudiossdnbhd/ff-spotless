@@ -8,6 +8,7 @@ class PublicHolidayReconciler
         private readonly OperationalDate $dates,
         private readonly ChecklistMaterializer $daily,
         private readonly WeeklyTaskScheduler $weekly,
+        private readonly MonthlyTaskScheduler $monthly,
     ) {}
 
     /**
@@ -20,5 +21,6 @@ class PublicHolidayReconciler
 
         $this->daily->refreshMaterializedDatesFrom($from);
         $this->weekly->reconcilePublicHolidaySchedulesFrom($from);
+        $this->monthly->reconcilePublicHolidaySchedulesFrom($from);
     }
 }

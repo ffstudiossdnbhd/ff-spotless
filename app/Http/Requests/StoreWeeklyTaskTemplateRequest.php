@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use App\Http\Requests\Concerns\SanitizesPlainText;
+use App\Models\TaskSession;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Validator;
 
@@ -17,8 +18,15 @@ class StoreWeeklyTaskTemplateRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $finishTime = $this->input('finish_time');
+        if (is_string($finishTime) && strlen(trim($finishTime)) === 5) {
+            $finishTime = trim($finishTime) . ':00';
+        }
+
         $this->merge([
             'task_name' => $this->sanitizePlainText($this->input('task_name')),
+            'description' => $this->input('description') ? $this->sanitizePlainText($this->input('description')) : null,
+            'finish_time' => $finishTime,
             'applies_to_all_collections' => $this->boolean('applies_to_all_collections'),
             'task_collection_ids' => array_values(array_filter((array) $this->input('task_collection_ids', []), static fn ($value) => $value !== null && $value !== '')),
         ]);
@@ -28,24 +36,41 @@ class StoreWeeklyTaskTemplateRequest extends FormRequest
     {
         return [
             'task_name' => ['bail', 'required', 'string', 'max:255'],
+            'description' => ['bail', 'nullable', 'string', 'max:2000'],
             'task_session_id' => ['bail', 'required', 'integer', 'exists:task_sessions,id'],
             'applies_to_all_collections' => ['bail', 'required', 'boolean'],
             'task_collection_ids' => ['bail', 'array'],
             'task_collection_ids.*' => ['bail', 'integer', 'distinct', 'exists:task_collections,id'],
             'due_weekday' => ['bail', 'required', 'integer', 'between:1,5'],
-            'credit_hours' => ['bail', 'required', 'numeric', 'min:0.25', 'max:24', 'decimal:0,2', 'multiple_of:0.25'],
+            'finish_time' => ['bail', 'required', 'regex:/^\d{2}:\d{2}(:\d{2})?$/'],
         ];
     }
 
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $validator): void {
-            if ($this->boolean('applies_to_all_collections')) {
-                return;
+            if (! $this->boolean('applies_to_all_collections')) {
+                if (count((array) $this->input('task_collection_ids', [])) === 0) {
+                    $validator->errors()->add('task_collection_ids', 'Choose at least one task collection, or select all collections.');
+                }
             }
 
-            if (count((array) $this->input('task_collection_ids', [])) === 0) {
-                $validator->errors()->add('task_collection_ids', 'Choose at least one task collection, or select all collections.');
+            $sessionId = $this->input('task_session_id');
+            $finishTime = $this->input('finish_time');
+
+            if ($sessionId && $finishTime) {
+                $session = TaskSession::query()->find($sessionId);
+                if ($session instanceof TaskSession) {
+                    $sessionStart = strlen($session->start_time) === 5 ? $session->start_time . ':00' : substr($session->start_time, 0, 8);
+                    $sessionEnd = strlen($session->end_time) === 5 ? $session->end_time . ':00' : substr($session->end_time, 0, 8);
+                    $checkFinish = strlen($finishTime) === 5 ? $finishTime . ':00' : substr($finishTime, 0, 8);
+
+                    if ($checkFinish <= $sessionStart || $checkFinish > $sessionEnd) {
+                        $startFormatted = \Carbon\CarbonImmutable::parse($sessionStart)->format('g:i A');
+                        $endFormatted = \Carbon\CarbonImmutable::parse($sessionEnd)->format('g:i A');
+                        $validator->errors()->add('finish_time', "Finish time must be after session start ({$startFormatted}) and up to session end ({$endFormatted}).");
+                    }
+                }
             }
         });
     }
@@ -62,9 +87,8 @@ class StoreWeeklyTaskTemplateRequest extends FormRequest
             'task_collection_ids.*.exists' => 'A task collection was not found.',
             'due_weekday.required' => 'Weekly due day is required.',
             'due_weekday.between' => 'Weekly tasks can only be due from Monday to Friday.',
-            'credit_hours.required' => 'Credit hours are required.',
-            'credit_hours.min' => 'Credit hours must be at least 0.25.',
-            'credit_hours.max' => 'Credit hours must not exceed 24.',
+            'finish_time.required' => 'Finish time is required.',
+            'finish_time.regex' => 'Finish time format must be HH:MM.',
         ];
     }
 }

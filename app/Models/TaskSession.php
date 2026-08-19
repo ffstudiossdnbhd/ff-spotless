@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class TaskSession extends Model
 {
-    protected $fillable = ['name', 'sort_order', 'is_active'];
+    protected $fillable = ['name', 'start_time', 'end_time', 'sort_order', 'is_active'];
 
     protected function casts(): array
     {
@@ -16,6 +16,14 @@ class TaskSession extends Model
             'sort_order' => 'integer',
             'is_active' => 'boolean',
         ];
+    }
+
+    public static function formatSessionName(string $startTime, string $endTime): string
+    {
+        $start = \Carbon\CarbonImmutable::parse($startTime)->format('g:i A');
+        $end = \Carbon\CarbonImmutable::parse($endTime)->format('g:i A');
+
+        return "{$start} - {$end}";
     }
 
     public function scopeActive(Builder $query): Builder
@@ -31,5 +39,10 @@ class TaskSession extends Model
     public function weeklyTaskTemplates(): HasMany
     {
         return $this->hasMany(WeeklyTaskTemplate::class);
+    }
+
+    public function monthlyTaskTemplates(): HasMany
+    {
+        return $this->hasMany(MonthlyTaskTemplate::class);
     }
 }
