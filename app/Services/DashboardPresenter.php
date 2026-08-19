@@ -241,7 +241,9 @@ class DashboardPresenter
                     'collectionNames' => $template->taskCollections->pluck('name')->values()->all(),
                 ];
 
-                if ($type === 'weekly') {
+                if ($type === 'daily') {
+                    $item['daysOfWeek'] = $template->days_of_week ?? [1, 2, 3, 4, 5];
+                } elseif ($type === 'weekly') {
                     $item['dueWeekday'] = $template->due_weekday;
                     $item['startsOn'] = $template->starts_on->toDateString();
                 } elseif ($type === 'monthly') {

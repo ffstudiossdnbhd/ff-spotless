@@ -84,6 +84,26 @@ function weekdayName(day) {
     return ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][Number(day) - 1] ?? '';
 }
 
+const WEEKDAY_OPTIONS = [
+    { value: 1, label: 'Monday', short: 'Mon' },
+    { value: 2, label: 'Tuesday', short: 'Tue' },
+    { value: 3, label: 'Wednesday', short: 'Wed' },
+    { value: 4, label: 'Thursday', short: 'Thu' },
+    { value: 5, label: 'Friday', short: 'Fri' },
+];
+
+function formatDaysOfWeek(days) {
+    if (!days || !days.length || days.length === 5) {
+        return 'Mon – Fri';
+    }
+    return [...days]
+        .map(Number)
+        .sort((a, b) => a - b)
+        .map((d) => WEEKDAY_OPTIONS.find((w) => w.value === d)?.short ?? weekdayName(d))
+        .filter(Boolean)
+        .join(', ');
+}
+
 // Computed Properties
 const activeSessions = computed(() => props.sessions.filter((session) => session.isActive));
 const templates = computed(() => collectionItems(props.templates));
@@ -199,6 +219,7 @@ const taskForm = ref({
     task_name: '',
     description: '',
     task_session_id: '',
+    days_of_week: [1, 2, 3, 4, 5],
     finish_time: '09:00',
     collection_mode: 'single',
     single_collection_id: '',
@@ -319,6 +340,7 @@ function defaultTaskForm() {
         task_name: '',
         description: '',
         task_session_id: session?.id ?? '',
+        days_of_week: [1, 2, 3, 4, 5],
         finish_time: session?.endTime ? session.endTime.slice(0, 5) : '09:00',
         collection_mode: 'single',
         single_collection_id: collectionId,
@@ -547,6 +569,14 @@ function taskTypeLabel(type) {
     return 'Harian';
 }
 
+function toggleAllDays(form) {
+    if (form.days_of_week?.length === 5) {
+        form.days_of_week = [];
+    } else {
+        form.days_of_week = [1, 2, 3, 4, 5];
+    }
+}
+
 function normalizeTaskPayload(form) {
     const collectionIds = form.collection_mode === 'all'
         ? []
@@ -556,7 +586,7 @@ function normalizeTaskPayload(form) {
 
     const finishTime = form.finish_time ? (form.finish_time.length === 5 ? `${form.finish_time}:00` : form.finish_time) : '';
 
-    return {
+    const payload = {
         task_name: form.task_name,
         description: form.description?.trim() || null,
         task_session_id: form.task_session_id,
@@ -565,6 +595,12 @@ function normalizeTaskPayload(form) {
         due_weekday: form.due_weekday,
         finish_time: finishTime,
     };
+
+    if (form.task_type === 'daily' || form.days_of_week !== undefined) {
+        payload.days_of_week = (form.days_of_week ?? [1, 2, 3, 4, 5]).map(Number);
+    }
+
+    return payload;
 }
 
 function sessionTone(index) {
@@ -998,6 +1034,7 @@ function openEdit(kind, item) {
         task_name: item.taskName,
         description: item.description || '',
         task_session_id: item.sessionId,
+        days_of_week: item.daysOfWeek ? [...item.daysOfWeek] : [1, 2, 3, 4, 5],
         finish_time: item.finishTime ? item.finishTime.slice(0, 5) : '',
         collection_mode: item.appliesToAllCollections ? 'all' : ((item.collectionIds?.length ?? 0) > 1 ? 'multiple' : 'single'),
         single_collection_id: item.collectionIds?.[0] ?? defaultCollectionId(),
@@ -1739,6 +1776,32 @@ function chooseAdminDate(date) {
                             </label>
                             <p v-if="errorFor('task', 'due_weekday')" :id="errorId('task', 'due_weekday')" class="field-error">{{ errorFor('task', 'due_weekday') }}</p>
 
+                            <div v-if="taskForm.task_type === 'daily'" class="rounded-2xl border border-zinc-700 bg-zinc-900 p-3">
+                                <div class="flex items-center justify-between">
+                                    <p class="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">Days of week</p>
+                                    <button type="button" class="text-xs font-semibold text-rose-400 hover:underline" @click="toggleAllDays(taskForm)">
+                                        {{ taskForm.days_of_week?.length === 5 ? 'Deselect all' : 'Select all' }}
+                                    </button>
+                                </div>
+                                <div class="mt-2.5 flex flex-wrap gap-2">
+                                    <label
+                                        v-for="day in WEEKDAY_OPTIONS"
+                                        :key="day.value"
+                                        class="flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold transition-colors"
+                                        :class="taskForm.days_of_week?.includes(day.value) ? 'border-rose-500/60 bg-rose-500/10 text-rose-200' : 'border-zinc-700 bg-zinc-800/60 text-zinc-400 hover:border-zinc-600'"
+                                    >
+                                        <input
+                                            v-model="taskForm.days_of_week"
+                                            type="checkbox"
+                                            :value="day.value"
+                                            class="accent-rose-500"
+                                        >
+                                        <span>{{ day.label }}</span>
+                                    </label>
+                                </div>
+                                <p v-if="errorFor('task', 'days_of_week')" :id="errorId('task', 'days_of_week')" class="field-error mt-2">{{ errorFor('task', 'days_of_week') }}</p>
+                            </div>
+
                             <label class="form-label">Where this task appears<select v-model="taskForm.collection_mode" class="field"><option value="single">One rotation</option><option value="multiple">Selected rotations</option><option value="all">All rotations</option></select></label>
                             <label v-if="taskForm.collection_mode === 'single'" class="form-label">Rotation<select v-model="taskForm.single_collection_id" required class="field" v-bind="validationAttrs('task', 'task_collection_ids')"><option v-for="collection in taskCollections" :key="collection.id" :value="collection.id">{{ collectionDisplayName(collection) }}</option></select></label>
                             <div v-else-if="taskForm.collection_mode === 'multiple'" class="rounded-2xl border border-zinc-700 bg-zinc-900 p-3">
@@ -1816,6 +1879,7 @@ function chooseAdminDate(date) {
                                                 <span v-if="item.finishTime" class="font-semibold text-zinc-300">Finish: {{ formatTime12(item.finishTime) }}</span>
                                                 <span v-if="item.type === 'weekly'">• Due {{ weekdayName(item.dueWeekday) }}</span>
                                                 <span v-else-if="item.type === 'monthly'">• Last Friday of month</span>
+                                                <span v-else-if="item.type === 'daily'">• {{ formatDaysOfWeek(item.daysOfWeek) }}</span>
                                                 <span v-if="item.description" class="text-zinc-500">• {{ item.description.slice(0, 40) }}{{ item.description.length > 40 ? '...' : '' }}</span>
                                             </div>
                                         </div>
@@ -1979,6 +2043,32 @@ function chooseAdminDate(date) {
                     <p v-if="errorFor('taskEdit', 'finish_time')" :id="errorId('taskEdit', 'finish_time')" class="field-error">{{ errorFor('taskEdit', 'finish_time') }}</p>
 
                     <label v-if="editForm.task_type === 'weekly'" class="form-label">Weekly due day<select v-model.number="editForm.due_weekday" class="field" v-bind="validationAttrs('taskEdit', 'due_weekday')"><option v-for="day in 5" :key="day" :value="day">{{ weekdayName(day) }}</option></select></label>
+
+                    <div v-if="editForm.task_type === 'daily'" class="rounded-2xl border border-zinc-700 bg-zinc-900 p-3">
+                        <div class="flex items-center justify-between">
+                            <p class="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">Days of week</p>
+                            <button type="button" class="text-xs font-semibold text-rose-400 hover:underline" @click="toggleAllDays(editForm)">
+                                {{ editForm.days_of_week?.length === 5 ? 'Deselect all' : 'Select all' }}
+                            </button>
+                        </div>
+                        <div class="mt-2.5 flex flex-wrap gap-2">
+                            <label
+                                v-for="day in WEEKDAY_OPTIONS"
+                                :key="day.value"
+                                class="flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold transition-colors"
+                                :class="editForm.days_of_week?.includes(day.value) ? 'border-rose-500/60 bg-rose-500/10 text-rose-200' : 'border-zinc-700 bg-zinc-800/60 text-zinc-400 hover:border-zinc-600'"
+                            >
+                                <input
+                                    v-model="editForm.days_of_week"
+                                    type="checkbox"
+                                    :value="day.value"
+                                    class="accent-rose-500"
+                                >
+                                <span>{{ day.label }}</span>
+                            </label>
+                        </div>
+                        <p v-if="errorFor('taskEdit', 'days_of_week')" :id="errorId('taskEdit', 'days_of_week')" class="field-error mt-2">{{ errorFor('taskEdit', 'days_of_week') }}</p>
+                    </div>
                     <label class="form-label">Where this task appears<select v-model="editForm.collection_mode" class="field"><option value="single">One rotation</option><option value="multiple">Selected rotations</option><option value="all">All rotations</option></select></label>
                     <label v-if="editForm.collection_mode === 'single'" class="form-label">Rotation<select v-model="editForm.single_collection_id" required class="field" v-bind="validationAttrs('taskEdit', 'task_collection_ids')"><option v-for="collection in taskCollections" :key="collection.id" :value="collection.id">{{ collectionDisplayName(collection) }}</option></select></label>
                     <div v-else-if="editForm.collection_mode === 'multiple'" class="rounded-2xl border border-zinc-700 bg-zinc-900 p-3">

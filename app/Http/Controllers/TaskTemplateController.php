@@ -35,10 +35,12 @@ class TaskTemplateController extends Controller
 
         $template = DB::transaction(function () use ($data): TaskTemplate {
             $collectionIds = $data['applies_to_all_collections'] ? [] : array_values(array_unique($data['task_collection_ids'] ?? []));
+            $daysOfWeek = $data['days_of_week'] ?? [1, 2, 3, 4, 5];
             $template = TaskTemplate::query()->create([
                 'task_name' => $data['task_name'],
                 'description' => $data['description'] ?? null,
                 'task_session_id' => $data['task_session_id'],
+                'days_of_week' => $daysOfWeek,
                 'task_collection_id' => $collectionIds[0] ?? null,
                 'applies_to_all_collections' => $data['applies_to_all_collections'],
                 'finish_time' => $data['finish_time'],
@@ -55,6 +57,7 @@ class TaskTemplateController extends Controller
         $audits->admin('task_template.created', $template, [
             'task_type' => 'daily',
             'task_name' => $template->task_name,
+            'days_of_week' => $template->days_of_week,
         ]);
 
         return to_route('admin.index');
@@ -79,6 +82,7 @@ class TaskTemplateController extends Controller
 
         DB::transaction(function () use ($taskTemplate, $data): void {
             $collectionIds = $data['applies_to_all_collections'] ? [] : array_values(array_unique($data['task_collection_ids'] ?? []));
+            $daysOfWeek = $data['days_of_week'] ?? [1, 2, 3, 4, 5];
             $lockedTemplate = TaskTemplate::query()->lockForUpdate()->findOrFail($taskTemplate->getKey());
 
             if (! $lockedTemplate->is_active) {
@@ -89,6 +93,7 @@ class TaskTemplateController extends Controller
                 'task_name' => $data['task_name'],
                 'description' => $data['description'] ?? null,
                 'task_session_id' => $data['task_session_id'],
+                'days_of_week' => $daysOfWeek,
                 'task_collection_id' => $collectionIds[0] ?? null,
                 'applies_to_all_collections' => $data['applies_to_all_collections'],
                 'finish_time' => $data['finish_time'],
@@ -101,6 +106,7 @@ class TaskTemplateController extends Controller
         $audits->admin('task_template.updated', $taskTemplate, [
             'task_type' => 'daily',
             'task_name' => $data['task_name'],
+            'days_of_week' => $data['days_of_week'] ?? [1, 2, 3, 4, 5],
         ]);
 
         return to_route('admin.index');

@@ -23,10 +23,17 @@ class StoreTaskTemplateRequest extends FormRequest
             $finishTime = trim($finishTime) . ':00';
         }
 
+        $days = $this->input('days_of_week');
+        if (is_array($days)) {
+            $days = array_values(array_unique(array_map('intval', array_filter($days, static fn ($d) => $d !== null && $d !== ''))));
+            sort($days);
+        }
+
         $this->merge([
             'task_name' => $this->sanitizePlainText($this->input('task_name')),
             'description' => $this->input('description') ? $this->sanitizePlainText($this->input('description')) : null,
             'finish_time' => $finishTime,
+            'days_of_week' => $days,
             'applies_to_all_collections' => $this->boolean('applies_to_all_collections'),
             'task_collection_ids' => array_values(array_filter((array) $this->input('task_collection_ids', []), static fn ($value) => $value !== null && $value !== '')),
         ]);
@@ -41,6 +48,8 @@ class StoreTaskTemplateRequest extends FormRequest
             'task_name' => ['bail', 'required', 'string', 'max:255'],
             'description' => ['bail', 'nullable', 'string', 'max:2000'],
             'task_session_id' => ['bail', 'required', 'integer', 'exists:task_sessions,id'],
+            'days_of_week' => ['bail', 'required', 'array', 'min:1'],
+            'days_of_week.*' => ['bail', 'integer', 'distinct', 'in:1,2,3,4,5'],
             'applies_to_all_collections' => ['bail', 'required', 'boolean'],
             'task_collection_ids' => ['bail', 'array'],
             'task_collection_ids.*' => ['bail', 'integer', 'distinct', 'exists:task_collections,id'],
@@ -89,6 +98,10 @@ class StoreTaskTemplateRequest extends FormRequest
             'task_session_id.required' => 'Task session is required.',
             'task_session_id.integer' => 'Task session is invalid.',
             'task_session_id.exists' => 'Task session was not found.',
+            'days_of_week.required' => 'Please select at least one day.',
+            'days_of_week.array' => 'Days must be provided as a list.',
+            'days_of_week.min' => 'Please select at least one day.',
+            'days_of_week.*.in' => 'Selected day is invalid.',
             'task_collection_ids.array' => 'Task collections are invalid.',
             'task_collection_ids.*.integer' => 'A task collection is invalid.',
             'task_collection_ids.*.exists' => 'A task collection was not found.',

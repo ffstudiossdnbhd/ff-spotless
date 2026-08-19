@@ -62,7 +62,12 @@ class ChecklistMaterializer
                     ->with('taskSession:id,name')
                     ->orderBy('sort_order')
                     ->orderBy('id')
-                    ->get();
+                    ->get()
+                    ->filter(function (TaskTemplate $template) use ($date): bool {
+                        $days = $template->days_of_week ?? [1, 2, 3, 4, 5];
+                        return in_array((int) $date->dayOfWeekIso, $days, true);
+                    })
+                    ->values();
 
                 $rows = $templates->map(static fn (TaskTemplate $template): array => [
                     'date' => $dateString,
@@ -217,6 +222,10 @@ class ChecklistMaterializer
                 ->orderBy('sort_order')
                 ->orderBy('id')
                 ->get()
+                ->filter(function (TaskTemplate $template) use ($date): bool {
+                    $days = $template->days_of_week ?? [1, 2, 3, 4, 5];
+                    return in_array((int) $date->dayOfWeekIso, $days, true);
+                })
                 ->keyBy('id');
 
             $rows = DailyChecklist::query()

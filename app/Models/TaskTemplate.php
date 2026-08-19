@@ -19,6 +19,7 @@ class TaskTemplate extends Model
         'task_name',
         'description',
         'task_session_id',
+        'days_of_week',
         'task_collection_id',
         'applies_to_all_collections',
         'finish_time',
@@ -33,6 +34,7 @@ class TaskTemplate extends Model
     {
         return [
             'task_session_id' => 'integer',
+            'days_of_week' => 'array',
             'task_collection_id' => 'integer',
             'applies_to_all_collections' => 'boolean',
             'sort_order' => 'integer',
