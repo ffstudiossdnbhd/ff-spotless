@@ -1286,7 +1286,7 @@ function chooseAdminDate(date) {
                                     <span v-else-if="task.isWeekly" class="rounded-md border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[11px] font-semibold text-sky-300">Mingguan</span>
                                     <span v-if="task.postponedCount" class="text-[11px] text-amber-400">Ditunda {{ task.postponedCount }}x</span>
                                     <span v-if="task.description" class="inline-flex items-center gap-1 text-[11px] text-zinc-400">
-                                        <svg class="h-3 w-3 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4M12 8h.01"></path></svg>
+                                        <svg class="h-3.5 w-3.5 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
                                         Butiran
                                     </span>
                                 </div>
@@ -1295,12 +1295,12 @@ function chooseAdminDate(date) {
                             <button
                                 v-if="task.description"
                                 type="button"
-                                class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
+                                class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-700 text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
                                 aria-label="Lihat penerangan tugasan"
                                 title="Lihat penerangan tugasan"
                                 @click="openTaskDetails(task)"
                             >
-                                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4M12 8h.01"></path></svg>
+                                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
                             </button>
                         </article>
                     </div>
