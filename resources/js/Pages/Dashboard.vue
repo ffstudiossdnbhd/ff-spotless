@@ -75,6 +75,7 @@ const publicHolidayEditForm = ref({});
 const taskListFilters = ref({
     collection_id: 'all',
     task_type: 'all',
+    search: '',
 });
 const adminTabs = [
     { key: 'statistics', label: 'Dashboard', icon: 'dashboard' },
@@ -443,7 +444,14 @@ function taskEditorItemsFor(sessionId) {
     return taskEditorItems.value
         .filter((item) => Number(item.sessionId) === Number(sessionId))
         .filter((item) => taskListFilters.value.task_type === 'all' || item.type === taskListFilters.value.task_type)
-        .filter(matchesTaskCollectionFilter);
+        .filter(matchesTaskCollectionFilter)
+        .filter(matchesTaskSearchFilter);
+}
+
+function matchesTaskSearchFilter(item) {
+    const q = taskListFilters.value.search?.trim().toLowerCase();
+    if (!q) return true;
+    return (item.taskName || '').toLowerCase().includes(q);
 }
 
 function matchesTaskCollectionFilter(item) {
@@ -1339,34 +1347,106 @@ function chooseAdminDate(date) {
 
             <div class="min-w-0">
                 <header class="sticky top-0 z-30 border-b border-zinc-800 bg-[#121212]/95 px-5 py-4 backdrop-blur lg:hidden">
-                    <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <button
+                            type="button"
+                            class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-zinc-700 bg-zinc-900/60 text-zinc-200 transition hover:border-zinc-500 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#ED4264]"
+                            :aria-expanded="mobileNavOpen"
+                            aria-controls="admin-mobile-drawer"
+                            aria-label="Open navigation menu"
+                            @click="mobileNavOpen = true"
+                        >
+                            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <line x1="3" y1="6" x2="21" y2="6"></line>
+                                <line x1="3" y1="12" x2="21" y2="12"></line>
+                                <line x1="3" y1="18" x2="21" y2="18"></line>
+                            </svg>
+                        </button>
                         <div>
                             <p class="text-xs font-black uppercase tracking-[.2em] text-[#ED4264]">Admin</p>
                             <h1 class="text-lg font-black">FF Spotless</h1>
                         </div>
-                        <div class="flex gap-2">
-                            <button type="button" class="h-10 rounded-lg border border-zinc-700 px-3 text-xs font-bold" :aria-expanded="mobileNavOpen" aria-controls="admin-mobile-menu" @click="mobileNavOpen = !mobileNavOpen">Menu</button>
-                            <button class="inline-flex h-10 items-center gap-2 rounded-lg border border-zinc-700 px-3 text-xs font-bold" @click="logoutAdmin"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-4 w-4"><path :d="adminIconPath('logout')" stroke-linecap="round" stroke-linejoin="round"></path></svg><span>Log out</span></button>
-                            <button type="button" class="theme-toggle shrink-0 rounded-lg border border-zinc-700" :aria-label="themeToggleLabel" :title="themeToggleLabel" @click="toggleTheme">
-                                <svg v-if="theme === 'light'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                                    <circle cx="12" cy="12" r="4"></circle>
-                                    <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" stroke-linecap="round"></path>
-                                </svg>
-                                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                                    <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z" stroke-linejoin="round"></path>
-                                </svg>
-                                <span>{{ theme === 'light' ? 'Light' : 'Dark' }}</span>
-                            </button>
-                        </div>
                     </div>
-                    <nav v-if="mobileNavOpen" id="admin-mobile-menu" class="mt-4 space-y-3 rounded-xl border border-zinc-700 bg-zinc-900 p-2 shadow-xl" aria-label="Admin navigation">
-                        <div v-for="(group, groupIndex) in adminTabGroups" :key="`mobile-admin-group-${groupIndex}`" :class="groupIndex ? 'border-t border-zinc-700 pt-3' : ''">
-                            <div class="grid gap-2">
-                                <button v-for="tab in group" :key="tab.key" class="admin-tab flex items-center gap-3 rounded-lg border px-3 py-3 text-left text-sm font-bold" :class="adminTab === tab.key ? 'admin-tab-active border-[#ED4264]/40 bg-[#ED4264]/10 text-rose-200' : 'border-zinc-700 text-zinc-300'" :aria-current="adminTab === tab.key ? 'page' : undefined" @click="selectAdminTab(tab)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-4 w-4 shrink-0"><path :d="adminIconPath(tab.icon)" stroke-linecap="round" stroke-linejoin="round"></path></svg><span>{{ tab.label }}</span></button>
+                </header>
+
+                <!-- Mobile Drawer Menu (Overlay on top of the page) -->
+                <div class="lg:hidden">
+                    <Transition name="drawer-backdrop">
+                        <div
+                            v-if="mobileNavOpen"
+                            class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs"
+                            aria-hidden="true"
+                            @click="mobileNavOpen = false"
+                        ></div>
+                    </Transition>
+
+                    <Transition name="drawer-panel">
+                        <div
+                            v-if="mobileNavOpen"
+                            id="admin-mobile-drawer"
+                            class="fixed inset-y-0 left-0 z-50 flex h-full w-80 max-w-[85vw] flex-col border-r border-zinc-800 bg-[#121212] px-5 py-6 shadow-2xl overflow-y-auto"
+                            role="dialog"
+                            aria-modal="true"
+                            aria-label="Admin navigation drawer"
+                        >
+                            <div class="flex items-center justify-between border-b border-zinc-800 pb-4">
+                                <div>
+                                    <p class="text-xs font-black uppercase tracking-[.2em] text-[#ED4264]">Admin</p>
+                                    <p class="text-xl font-black">FF Spotless</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-[#ED4264]/50"
+                                    aria-label="Close navigation menu"
+                                    @click="mobileNavOpen = false"
+                                >
+                                    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <nav class="mt-6 flex-1 space-y-4" aria-label="Admin mobile navigation">
+                                <template v-for="(group, groupIndex) in adminTabGroups" :key="`mobile-admin-group-${groupIndex}`">
+                                    <div v-if="groupIndex" class="border-t border-zinc-800"></div>
+                                    <div class="space-y-2">
+                                        <button
+                                            v-for="tab in group"
+                                            :key="tab.key"
+                                            class="admin-tab flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left text-sm font-bold"
+                                            :class="adminTab === tab.key ? 'admin-tab-active border-[#ED4264]/40 bg-[#ED4264]/10 text-rose-200' : 'border-transparent text-zinc-400 hover:border-zinc-700 hover:text-zinc-100'"
+                                            :aria-current="adminTab === tab.key ? 'page' : undefined"
+                                            @click="selectAdminTab(tab)"
+                                        >
+                                            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-4 w-4 shrink-0">
+                                                <path :d="adminIconPath(tab.icon)" stroke-linecap="round" stroke-linejoin="round"></path>
+                                            </svg>
+                                            <span>{{ tab.label }}</span>
+                                        </button>
+                                    </div>
+                                </template>
+                            </nav>
+
+                            <div class="mt-6 flex items-center gap-2 border-t border-zinc-800 pt-4">
+                                <button class="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-lg border border-zinc-700 px-3 text-xs font-bold text-rose-300" @click="logoutAdmin">
+                                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-4 w-4"><path :d="adminIconPath('logout')" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                                    <span>Log out</span>
+                                </button>
+                                <button type="button" class="theme-toggle shrink-0 rounded-lg border border-zinc-700" :aria-label="themeToggleLabel" :title="themeToggleLabel" @click="toggleTheme">
+                                    <svg v-if="theme === 'light'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                                        <circle cx="12" cy="12" r="4"></circle>
+                                        <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" stroke-linecap="round"></path>
+                                    </svg>
+                                    <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                                        <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z" stroke-linejoin="round"></path>
+                                    </svg>
+                                    <span>{{ theme === 'light' ? 'Light' : 'Dark' }}</span>
+                                </button>
                             </div>
                         </div>
-                    </nav>
-                </header>
+                    </Transition>
+                </div>
 
                 <section class="mx-auto max-w-6xl px-5 py-6">
                     <div class="mb-6 hidden items-end justify-between lg:flex">
@@ -1521,8 +1601,8 @@ function chooseAdminDate(date) {
                                     <div class="flex shrink-0 items-center gap-2">
                                         <span v-if="!holiday.isEditable" class="rounded-full border border-zinc-700 px-2 py-1 text-xs font-black uppercase text-zinc-500">Locked</span>
                                         <template v-else>
-                                            <button type="button" class="small-button" :disabled="busy" @click="editPublicHoliday(holiday)">Edit</button>
-                                            <button type="button" class="small-button text-rose-300" :disabled="busy" @click="deletePublicHoliday(holiday)">Delete</button>
+                                            <button type="button" class="small-button inline-flex h-9 w-9 items-center justify-center p-0" :disabled="busy" aria-label="Edit public holiday" title="Edit public holiday" @click="editPublicHoliday(holiday)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path d="m4 16.5-.7 4.2 4.2-.7L18.8 8.7l-3.5-3.5L4 16.5Z" stroke-linejoin="round"></path><path d="m13.8 6.7 3.5 3.5" stroke-linecap="round"></path></svg></button>
+                                            <button type="button" class="small-button inline-flex h-9 w-9 items-center justify-center p-0 text-rose-400 transition hover:border-rose-400/60 hover:bg-rose-400/10 hover:text-rose-300" :disabled="busy" aria-label="Delete public holiday" title="Delete public holiday" @click="deletePublicHoliday(holiday)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
                                         </template>
                                     </div>
                                 </article>
@@ -1538,7 +1618,36 @@ function chooseAdminDate(date) {
                     </div>
 
                     <div v-else-if="adminTab === 'collections'" class="grid gap-6 lg:grid-cols-[320px_1fr]">
-                        <aside class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5"><p class="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Rotations</p><p class="mt-1 text-xs leading-relaxed text-zinc-400">Each custom rotation owns one Sunday–Saturday week. Rotations repeat in the order they are added.</p><form class="mt-5 space-y-2" @submit.prevent="createCollection"><label class="form-label" for="collection-name">Rotation name</label><input id="collection-name" v-model.trim="collectionForm.name" required maxlength="100" class="field !py-2 text-sm" placeholder="For example, Heavy Duty" v-bind="validationAttrs('collection', 'name')"><p v-if="errorFor('collection', 'name')" :id="errorId('collection', 'name')" class="field-error">{{ errorFor('collection', 'name') }}</p><button class="primary-button !py-2 text-sm">Add rotation</button></form><article v-if="defaultCollection" class="mt-5 flex items-center justify-between gap-3 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2"><div class="min-w-0"><p class="truncate text-sm font-semibold text-zinc-200">{{ collectionDisplayName(defaultCollection) }}</p><p class="text-xs text-zinc-500">Fallback on working days</p></div><span class="rounded-full border border-zinc-700 px-2 py-0.5 text-xs font-black uppercase text-zinc-400">System</span></article><p v-if="!manageableCollections.length" class="mt-4 rounded-xl border border-dashed border-zinc-700 p-3 text-xs text-zinc-500">No custom rotations yet. The fallback rotation is active on weekdays.</p><div v-else class="mt-4 space-y-2"><article v-for="(collection, index) in manageableCollections" :key="`manage-${collection.id}`" class="flex items-center justify-between gap-3 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2"><div class="min-w-0"><p class="truncate text-sm font-semibold text-zinc-200">Week {{ index + 1 }}: {{ collectionDisplayName(collection) }}</p></div><button class="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-bold text-rose-300 transition hover:border-rose-400/60 hover:bg-rose-400/10" @click="deleteCollection(collection)">Delete</button></article></div></aside>
+                        <aside class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5">
+                            <p class="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Rotations</p>
+                            <p class="mt-1 text-xs leading-relaxed text-zinc-400">Each custom rotation owns one Sunday–Saturday week. Rotations repeat in the order they are added.</p>
+                            <form class="mt-5 space-y-2" @submit.prevent="createCollection">
+                                <label class="form-label" for="collection-name">Rotation name</label>
+                                <input id="collection-name" v-model.trim="collectionForm.name" required maxlength="100" class="field !py-2 text-sm" placeholder="For example, Heavy Duty" v-bind="validationAttrs('collection', 'name')">
+                                <p v-if="errorFor('collection', 'name')" :id="errorId('collection', 'name')" class="field-error">{{ errorFor('collection', 'name') }}</p>
+                                <button class="primary-button !py-2 text-sm">Add rotation</button>
+                            </form>
+                            <article v-if="defaultCollection" class="mt-5 flex items-center justify-between gap-3 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2">
+                                <div class="min-w-0">
+                                    <p class="truncate text-sm font-semibold text-zinc-200">{{ collectionDisplayName(defaultCollection) }}</p>
+                                    <p class="text-xs text-zinc-500">Fallback on working days</p>
+                                </div>
+                                <span class="rounded-full border border-zinc-700 px-2 py-0.5 text-xs font-black uppercase text-zinc-400">System</span>
+                            </article>
+                            <p v-if="!manageableCollections.length" class="mt-4 rounded-xl border border-dashed border-zinc-700 p-3 text-xs text-zinc-500">No custom rotations yet. The fallback rotation is active on weekdays.</p>
+                            <div v-else class="mt-4 space-y-2">
+                                <article v-for="(collection, index) in manageableCollections" :key="`manage-${collection.id}`" class="flex items-center justify-between gap-3 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2">
+                                    <div class="min-w-0">
+                                        <p class="truncate text-sm font-semibold text-zinc-200">Week {{ index + 1 }}: {{ collectionDisplayName(collection) }}</p>
+                                    </div>
+                                    <button class="small-button inline-flex h-9 w-9 shrink-0 items-center justify-center p-0 text-rose-400 transition hover:border-rose-400/60 hover:bg-rose-400/10 hover:text-rose-300" aria-label="Delete rotation" title="Delete rotation" @click="deleteCollection(collection)">
+                                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
+                                            <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6" stroke-linecap="round" stroke-linejoin="round"></path>
+                                        </svg>
+                                    </button>
+                                </article>
+                            </div>
+                        </aside>
                         <section class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-4 sm:p-5">
                             <div>
                                 <p class="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Rotation calendar</p>
@@ -1547,7 +1656,7 @@ function chooseAdminDate(date) {
                                     <button type="button" class="calendar-nav-button" aria-label="Previous month" @click="prevCollectionCalendarMonth"><svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="m12.5 4.5-5.5 5.5 5.5 5.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
                                     <span class="min-w-32 text-center text-xs font-black text-zinc-200">{{ collectionCalendarMonthLabel(collectionCalendarMonth) }}</span>
                                     <button type="button" class="calendar-nav-button" aria-label="Next month" @click="nextCollectionCalendarMonth"><svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="m7.5 4.5 5.5 5.5-5.5 5.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
-                                    <button type="button" class="small-button" @click="goToCollectionCalendarToday">Today</button>
+                                    <button type="button" class="calendar-nav-button !w-auto px-4 text-xs font-bold" @click="goToCollectionCalendarToday">Today</button>
                                 </div>
                             </div>
                             <div class="rotation-calendar-scroll mt-5">
@@ -1569,16 +1678,13 @@ function chooseAdminDate(date) {
                     </div>
 
                     <div v-else-if="adminTab === 'sessions'" class="grid gap-6 lg:grid-cols-[360px_1fr]">
-                        <div class="space-y-5">
-                            <form class="space-y-3 rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5" @submit.prevent="createSession">
-                                <h2 class="font-black">Add Work Session</h2>
-                                <label class="form-label" for="session-name">Session name</label>
-                                <input id="session-name" v-model.trim="sessionForm.name" required maxlength="100" class="field" placeholder="For example, 4:00 PM - 6:00 PM" v-bind="validationAttrs('session', 'name')">
-                                <p v-if="errorFor('session', 'name')" :id="errorId('session', 'name')" class="field-error">{{ errorFor('session', 'name') }}</p>
-                                <button class="primary-button">Add work session</button>
-                            </form>
-                            <div class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5"><h2 class="font-black">Expected Weekly Load</h2><div class="mt-3 space-y-2"><div v-for="row in workload" :key="row.sessionId" class="rounded-xl border p-3" :class="row.isOverloaded ? 'border-amber-500/40 bg-amber-500/10' : 'border-zinc-700'"><div class="flex justify-between text-sm font-bold"><span>{{ row.sessionName }}</span><span>{{ row.expectedWeeklyCredits }} hrs</span></div><p class="mt-1 text-xs text-zinc-500">5 x {{ row.dailyCredits }} daily + {{ row.weeklyCredits }} weekly<span v-if="row.isOverloaded" class="text-amber-300"> - more than 20% above average</span></p></div></div></div>
-                        </div>
+                        <form class="h-full space-y-3 rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5" @submit.prevent="createSession">
+                            <h2 class="font-black">Add Work Session</h2>
+                            <label class="form-label" for="session-name">Session name</label>
+                            <input id="session-name" v-model.trim="sessionForm.name" required maxlength="100" class="field" placeholder="For example, 4:00 PM - 6:00 PM" v-bind="validationAttrs('session', 'name')">
+                            <p v-if="errorFor('session', 'name')" :id="errorId('session', 'name')" class="field-error">{{ errorFor('session', 'name') }}</p>
+                            <button class="primary-button">Add work session</button>
+                        </form>
                         <div class="space-y-2" data-sortable-work-sessions>
                             <article v-for="(session, index) in activeSessions" :key="session.id" :data-session-id="session.id" class="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-4"><button type="button" class="session-drag-handle inline-flex h-8 w-5 cursor-grab items-center justify-center text-zinc-500" aria-label="Drag to reorder work sessions"><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5"><circle cx="8" cy="5" r="1.7"></circle><circle cx="16" cy="5" r="1.7"></circle><circle cx="8" cy="12" r="1.7"></circle><circle cx="16" cy="12" r="1.7"></circle><circle cx="8" cy="19" r="1.7"></circle><circle cx="16" cy="19" r="1.7"></circle></svg></button><span class="w-7 text-center font-black text-zinc-500">{{ index + 1 }}</span><strong class="min-w-0 flex-1">{{ session.name }}</strong><button class="small-button inline-flex h-9 w-9 items-center justify-center p-0" aria-label="Edit work session" title="Edit work session" @click="editSession(session)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m4 16.5-.7 4.2 4.2-.7L18.8 8.7l-3.5-3.5L4 16.5Z" stroke-linejoin="round"></path><path d="m13.8 6.7 3.5 3.5" stroke-linecap="round"></path></svg></button><button class="small-button text-rose-300" @click="archiveSession(session)">Archive</button></article>
                         </div>
@@ -1609,34 +1715,75 @@ function chooseAdminDate(date) {
                         </form>
                         <div class="space-y-6">
                             <div class="rounded-2xl border border-zinc-700 bg-zinc-900/50 p-5">
-                                <div class="flex flex-wrap items-start justify-between gap-3">
-                                    <div>
-                                        <h2 class="font-black">Find Tasks</h2>
-                                        <p class="mt-1 text-sm text-zinc-400">Check which rotation a task belongs to before editing it. Tasks that apply to all rotations still show up in every filtered view.</p>
-                                    </div>
-                                    <button type="button" class="small-button" @click="taskListFilters = { collection_id: 'all', task_type: 'all' }">Reset filters</button>
+                                <div>
+                                    <h2 class="font-black">Find Tasks</h2>
+                                    <p class="mt-1 text-sm text-zinc-400">Check which rotation a task belongs to before editing it. Tasks that apply to all rotations still show up in every filtered view.</p>
                                 </div>
-                                <div class="mt-4 grid gap-3 md:grid-cols-2">
-                                    <label class="space-y-1 text-xs font-bold text-zinc-400">
-                                        <span>Rotation</span>
-                                        <select v-model="taskListFilters.collection_id" class="field">
-                                            <option value="all">All rotations</option>
-                                            <option v-for="collection in taskCollections" :key="collection.id" :value="collection.id">{{ collectionDisplayName(collection) }}</option>
-                                        </select>
-                                    </label>
-                                    <label class="space-y-1 text-xs font-bold text-zinc-400">
-                                        <span>Task type</span>
-                                        <select v-model="taskListFilters.task_type" class="field">
-                                            <option value="all">Daily and weekly</option>
-                                            <option value="daily">Daily only</option>
-                                            <option value="weekly">Weekly only</option>
-                                        </select>
-                                    </label>
+                                <div class="mt-4 space-y-3">
+                                    <div class="relative">
+                                        <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-zinc-400">
+                                            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
+                                                <circle cx="11" cy="11" r="8"></circle>
+                                                <path d="m21 21-4.3-4.3" stroke-linecap="round"></path>
+                                            </svg>
+                                        </div>
+                                        <input
+                                            v-model="taskListFilters.search"
+                                            type="text"
+                                            class="field !pl-9 !pr-9"
+                                            placeholder="Search tasks by name..."
+                                            aria-label="Search tasks by name"
+                                        >
+                                        <button
+                                            v-if="taskListFilters.search"
+                                            type="button"
+                                            class="absolute inset-y-0 right-0 flex items-center pr-3 text-zinc-400 hover:text-zinc-200"
+                                            aria-label="Clear search"
+                                            @click="taskListFilters.search = ''"
+                                        >
+                                            <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4">
+                                                <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"></path>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                    <div class="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+                                        <label class="space-y-1 text-xs font-bold text-zinc-400">
+                                            <span>Rotation</span>
+                                            <select v-model="taskListFilters.collection_id" class="field">
+                                                <option value="all">All rotations</option>
+                                                <option v-for="collection in taskCollections" :key="collection.id" :value="collection.id">{{ collectionDisplayName(collection) }}</option>
+                                            </select>
+                                        </label>
+                                        <label class="space-y-1 text-xs font-bold text-zinc-400">
+                                            <span>Task type</span>
+                                            <select v-model="taskListFilters.task_type" class="field">
+                                                <option value="all">Daily and weekly</option>
+                                                <option value="daily">Daily only</option>
+                                                <option value="weekly">Weekly only</option>
+                                            </select>
+                                        </label>
+                                        <button type="button" class="small-button h-11 px-4 text-xs font-bold" @click="taskListFilters = { collection_id: 'all', task_type: 'all', search: '' }">Reset filters</button>
+                                    </div>
                                 </div>
                             </div>
                             <section v-for="(session, index) in activeSessions" :key="session.id">
                                 <header class="mb-2 flex justify-between"><h3 class="font-black uppercase" :class="sessionTone(index)">{{ session.name }}</h3><span class="text-xs text-zinc-500">{{ filteredTaskEditorItemsFor(session.id).length }} task{{ filteredTaskEditorItemsFor(session.id).length === 1 ? '' : 's' }}</span></header>
-                                <div class="space-y-2"><article v-for="item in filteredTaskEditorItemsFor(session.id)" :key="`${item.type}:${item.id}`" class="flex items-center justify-between gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-3"><div><div class="flex flex-wrap items-center gap-2"><p class="text-sm font-semibold">{{ item.taskName }}</p><span class="rounded-full border border-zinc-700 px-2 py-0.5 text-xs font-black uppercase text-zinc-300">{{ taskTypeLabel(item.type) }}</span><span v-for="collection in taskCollectionPills(item)" :key="`${item.type}:${item.id}:${collection.key}`" class="max-w-40 truncate rounded-full border px-2 py-0.5 text-xs font-black" :class="collection.collectionId ? collectionTone(collection.collectionId) : 'border-zinc-700 bg-zinc-800 text-zinc-300'">{{ collection.name }}</span></div><p class="text-xs text-zinc-500">{{ item.type === 'weekly' ? `${weekdayName(item.dueWeekday)} - ` : '' }}{{ item.creditHours }} hrs</p></div><div class="flex gap-2"><button class="small-button" @click="openEdit(item.type, item)">Edit</button><button class="small-button text-rose-300" @click="deleteTemplate(item.type, item)">Archive</button></div></article></div>
+                                <div class="space-y-2">
+                                    <article v-for="item in filteredTaskEditorItemsFor(session.id)" :key="`${item.type}:${item.id}`" class="flex items-center justify-between gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-3">
+                                        <div>
+                                            <div class="flex flex-wrap items-center gap-2">
+                                                <p class="text-sm font-semibold">{{ item.taskName }}</p>
+                                                <span class="rounded-full border border-zinc-700 px-2 py-0.5 text-xs font-black uppercase text-zinc-300">{{ taskTypeLabel(item.type) }}</span>
+                                                <span v-for="collection in taskCollectionPills(item)" :key="`${item.type}:${item.id}:${collection.key}`" class="max-w-40 truncate rounded-full border px-2 py-0.5 text-xs font-black" :class="collection.collectionId ? collectionTone(collection.collectionId) : 'border-zinc-700 bg-zinc-800 text-zinc-300'">{{ collection.name }}</span>
+                                            </div>
+                                            <p class="mt-0.5 text-xs text-zinc-500">{{ item.type === 'weekly' ? `${weekdayName(item.dueWeekday)} - ` : '' }}{{ item.creditHours }} hrs</p>
+                                        </div>
+                                        <div class="flex shrink-0 items-center gap-2">
+                                            <button class="small-button inline-flex h-9 w-9 items-center justify-center p-0" aria-label="Edit task" title="Edit task" @click="openEdit(item.type, item)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path d="m4 16.5-.7 4.2 4.2-.7L18.8 8.7l-3.5-3.5L4 16.5Z" stroke-linejoin="round"></path><path d="m13.8 6.7 3.5 3.5" stroke-linecap="round"></path></svg></button>
+                                            <button class="small-button text-rose-300" @click="deleteTemplate(item.type, item)">Archive</button>
+                                        </div>
+                                    </article>
+                                </div>
                             </section>
                         </div>
                     </div>
@@ -1746,6 +1893,17 @@ function chooseAdminDate(date) {
 
 <style scoped>
 .field { width: 100%; height: 2.75rem; border-radius: .75rem; border: 1px solid rgb(63 63 70); background: #121212; padding: 0 .75rem; font-size: .875rem; outline: none; }
+select.field {
+    border-radius: .75rem;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%23a1a1aa' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E");
+    background-position: right 0.75rem center;
+    background-repeat: no-repeat;
+    background-size: 1.25rem 1.25rem;
+    padding-right: 2.25rem;
+}
 .field:focus { border-color: #ED4264; }
 .field[aria-invalid='true'] { border-color: #fb7185; }
 .form-label { display: grid; gap: .35rem; color: rgb(212 212 216); font-size: .8125rem; font-weight: 650; }
@@ -1832,6 +1990,9 @@ function chooseAdminDate(date) {
 .theme-light .field::placeholder { color: #71717a; opacity: 1; }
 .theme-light .field:focus { border-color: #e11d48; box-shadow: 0 0 0 3px rgb(225 29 72 / .12); }
 .theme-light .field option { background-color: #fff; color: #18181b; }
+.theme-light select.field {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%2364748b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E");
+}
 .theme-light .small-button:hover,
 .theme-light .theme-toggle:hover { background-color: #f1f5f9; border-color: #94a3b8; }
 .theme-light .theme-toggle:focus-visible,
@@ -1842,6 +2003,25 @@ function chooseAdminDate(date) {
 .theme-light .admin-tab-active { background-color: #fff1f2; border-color: #fda4af; color: #be123c; }
 .theme-light .admin-tab:not(.admin-tab-active) { border-color: transparent; }
 .theme-light .admin-tab:not(.admin-tab-active):hover { background-color: #fff; border-color: transparent; color: #18181b; }
+
+.drawer-backdrop-enter-active,
+.drawer-backdrop-leave-active {
+    transition: opacity 0.25s ease;
+}
+.drawer-backdrop-enter-from,
+.drawer-backdrop-leave-to {
+    opacity: 0;
+}
+
+.drawer-panel-enter-active,
+.drawer-panel-leave-active {
+    transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.drawer-panel-enter-from,
+.drawer-panel-leave-to {
+    transform: translateX(-100%);
+}
+
 @media (min-width: 640px) { .modal-backdrop { align-items: center; } }
 @media (min-width: 64rem) {
     .field,
