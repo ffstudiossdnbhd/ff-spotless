@@ -1794,7 +1794,7 @@ function chooseAdminDate(date) {
 
         <div v-if="evidenceTask" class="modal-backdrop">
             <form class="modal-card" @submit.prevent="completeTask">
-                <div class="flex justify-between gap-3"><div><h2 class="font-black">Foto Bukti</h2><p class="mt-1 text-sm text-zinc-400">{{ evidenceTask.text }}</p></div><button type="button" class="small-button" @click="closeEvidence">Tutup</button></div>
+                <div class="flex justify-between gap-3"><div><h2 class="font-black">Foto Bukti</h2><p class="mt-1 text-sm text-zinc-400">{{ evidenceTask.text }}</p></div><button type="button" class="small-button inline-flex h-9 w-9 shrink-0 items-center justify-center p-0" aria-label="Tutup" title="Tutup" @click="closeEvidence"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path d="M18 6 6 18M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></div>
                 <div class="mt-5 rounded-2xl border border-dashed border-zinc-600 p-5 text-center">
                     <strong class="block text-sm">Tambah foto bukti</strong>
                     <span class="mt-2 block text-xs text-zinc-500">JPEG, PNG atau WebP. Maksimum {{ uploadLimits.maxFiles }} foto, {{ uploadLimits.maxFileMb }} MB setiap satu, jumlah sehingga {{ uploadLimits.maxRequestMb }} MB.</span>
@@ -1818,7 +1818,7 @@ function chooseAdminDate(date) {
 
         <div v-if="viewingEvidence" class="modal-backdrop">
             <div class="modal-card max-w-3xl">
-                <div class="flex justify-between gap-3"><div><h2 class="font-black">{{ viewingEvidence.text }}</h2><p class="mt-1 text-xs text-zinc-500">{{ formatTimestamp(viewingEvidence.completedAt) }} - {{ viewingEvidence.creditHours }} hrs</p></div><button class="small-button" @click="viewingEvidence = null">Close</button></div>
+                <div class="flex justify-between gap-3"><div><h2 class="font-black">{{ viewingEvidence.text }}</h2><p class="mt-1 text-xs text-zinc-500">{{ formatTimestamp(viewingEvidence.completedAt) }} - {{ viewingEvidence.creditHours }} hrs</p></div><button type="button" class="small-button inline-flex h-9 w-9 shrink-0 items-center justify-center p-0" aria-label="Close" title="Close" @click="viewingEvidence = null"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path d="M18 6 6 18M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></div>
                 <p v-if="viewingEvidence.type === 'weekly'" class="mt-3 text-xs text-sky-300">Weekly - due {{ displayAdminDate(viewingEvidence.originalDueDate) }} - final scheduled date {{ displayAdminDate(viewingEvidence.scheduledDate) }}</p>
                 <p v-if="viewingEvidence.completionNote" class="mt-3 rounded-xl border border-zinc-700 bg-zinc-900 p-3 text-sm text-zinc-300">Note: {{ viewingEvidence.completionNote }}</p>
                 <div class="mt-5 grid gap-3 sm:grid-cols-2"><a v-for="photo in viewingEvidence.evidence" :key="photo.id" :href="photo.url" target="_blank" rel="noopener" class="overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900"><img :src="photo.url" loading="lazy" alt="Task evidence photo" class="max-h-96 w-full object-contain"></a></div>
@@ -1828,7 +1828,7 @@ function chooseAdminDate(date) {
 
         <div v-if="reopeningTask" class="modal-backdrop">
             <form class="modal-card" @submit.prevent="reopenTask">
-                <div class="flex justify-between gap-3"><div><h2 class="font-black">Reopen completed task</h2><p class="mt-1 text-sm text-zinc-400">{{ reopeningTask.text }}</p></div><button type="button" class="small-button" @click="closeReopen">Close</button></div>
+                <div class="flex justify-between gap-3"><div><h2 class="font-black">Reopen completed task</h2><p class="mt-1 text-sm text-zinc-400">{{ reopeningTask.text }}</p></div><button type="button" class="small-button inline-flex h-9 w-9 shrink-0 items-center justify-center p-0" aria-label="Close" title="Close" @click="closeReopen"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path d="M18 6 6 18M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></div>
                 <p class="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-100">The previous proof will no longer appear in task history. It is retained securely in the audit log.</p>
                 <label class="mt-5 block text-sm font-bold">Reason for reopening<textarea v-model.trim="reopenReason" required maxlength="1000" rows="4" class="field mt-2 h-auto py-3" placeholder="Explain why the proof was uploaded by mistake" v-bind="validationAttrs('reopen', 'reason')"></textarea></label>
                 <p v-if="errorFor('reopen', 'reason')" :id="errorId('reopen', 'reason')" class="field-error">{{ errorFor('reopen', 'reason') }}</p>
@@ -1838,7 +1838,7 @@ function chooseAdminDate(date) {
 
         <div v-if="publicHolidayEditing" class="modal-backdrop">
             <form class="modal-card" @submit.prevent="savePublicHoliday">
-                <div class="flex justify-between gap-3"><div><h2 class="font-black">Edit Public Holiday</h2><p class="mt-1 text-sm text-zinc-400">Update this future office-closure date.</p></div><button type="button" class="small-button" :disabled="busy" @click="closePublicHolidayEdit">Close</button></div>
+                <div class="flex justify-between gap-3"><div><h2 class="font-black">Edit Public Holiday</h2><p class="mt-1 text-sm text-zinc-400">Update this future office-closure date.</p></div><button type="button" class="small-button inline-flex h-9 w-9 shrink-0 items-center justify-center p-0" :disabled="busy" aria-label="Close" title="Close" @click="closePublicHolidayEdit"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path d="M18 6 6 18M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></div>
                 <div class="mt-5 space-y-3">
                     <label class="form-label" for="edit-public-holiday-name">Holiday name<input id="edit-public-holiday-name" v-model.trim="publicHolidayEditForm.name" required maxlength="100" class="field" v-bind="validationAttrs('publicHolidayEdit', 'name')"></label>
                     <p v-if="errorFor('publicHolidayEdit', 'name')" :id="errorId('publicHolidayEdit', 'name')" class="field-error">{{ errorFor('publicHolidayEdit', 'name') }}</p>
@@ -1851,7 +1851,7 @@ function chooseAdminDate(date) {
 
         <div v-if="editing || sessionEditing" class="modal-backdrop">
             <form class="modal-card" @submit.prevent="sessionEditing ? saveSession() : saveEdit()">
-                <div class="flex justify-between"><h2 class="font-black">{{ sessionEditing ? 'Edit Session' : 'Edit Template' }}</h2><button type="button" class="small-button" @click="editing = null; sessionEditing = null">Close</button></div>
+                <div class="flex justify-between"><h2 class="font-black">{{ sessionEditing ? 'Edit Session' : 'Edit Template' }}</h2><button type="button" class="small-button inline-flex h-9 w-9 shrink-0 items-center justify-center p-0" aria-label="Close" title="Close" @click="editing = null; sessionEditing = null"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path d="M18 6 6 18M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></div>
                 <div class="mt-5 space-y-3">
                     <template v-if="sessionEditing">
                         <label class="form-label">Session name<input v-model.trim="editForm.name" required maxlength="100" class="field" placeholder="For example, 4:00 PM - 6:00 PM" v-bind="validationAttrs('sessionEdit', 'name')"></label>
@@ -1961,7 +1961,10 @@ select.field {
 .theme-light [class*="text-zinc-700"], .theme-light [class*="text-zinc-800"] { color: #94a3b8; }
 .theme-light [class*="text-rose-100"],
 .theme-light [class*="text-rose-200"],
-.theme-light [class*="text-rose-300"] { color: #be123c; }
+.theme-light [class*="text-rose-300"],
+.theme-light [class*="text-rose-400"],
+.theme-light [class*="text-rose-500"],
+.theme-light [class*="text-red-"] { color: #e11d48; }
 .theme-light [class*="text-emerald-100"], .theme-light [class*="text-emerald-300"] { color: #047857; }
 .theme-light [class*="text-amber-300"] { color: #a16207; }
 .theme-light [class*="text-sky-300"] { color: #0369a1; }
@@ -1971,6 +1974,17 @@ select.field {
 .theme-light .field,
 .theme-light .small-button,
 .theme-light .theme-toggle { background-color: #fff; border-color: #cbd5e1; color: #18181b; color-scheme: light; }
+.theme-light .small-button[class*="text-rose-"],
+.theme-light .small-button[class*="text-red-"] {
+    color: #e11d48;
+    border-color: #fecdd3;
+}
+.theme-light .small-button[class*="text-rose-"]:hover,
+.theme-light .small-button[class*="text-red-"]:hover {
+    color: #be123c;
+    background-color: #fff1f2;
+    border-color: #fda4af;
+}
 .theme-light .readonly-field { background-color: #f8fafc; border-color: #cbd5e1; color: #334155; }
 .theme-light .readonly-field__value svg,
 .theme-light .readonly-field__badge,
