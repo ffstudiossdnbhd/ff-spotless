@@ -197,6 +197,7 @@ class DashboardPresenter
                 $task['startTimeFormatted'] = $startTimeFormatted;
                 $task['finishTimeFormatted'] = $finishTimeFormatted;
                 $task['timeSpan'] = "{$startTimeFormatted} - {$finishTimeFormatted}";
+                $task['timeSpanFormatted'] = "{$startTimeFormatted} - {$finishTimeFormatted}";
 
                 $prevFinish = $finishTime;
                 $result[] = $task;

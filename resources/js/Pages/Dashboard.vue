@@ -1281,7 +1281,7 @@ function chooseAdminDate(date) {
                                     <span class="block text-sm font-semibold" :class="task.completed ? 'text-zinc-500 line-through' : (dayUnavailable || publicHoliday) ? 'text-zinc-600' : 'text-zinc-100'">{{ task.text }}</span>
                                 </div>
                                 <div class="mt-1 flex flex-wrap items-center gap-2 text-xs font-bold text-zinc-400">
-                                    <span class="rounded-md border border-zinc-700 bg-zinc-800/80 px-2 py-0.5 text-[11px] font-semibold text-zinc-300">{{ task.timeSpanFormatted }}</span>
+                                    <span v-if="task.timeSpanFormatted || task.timeSpan" class="rounded-md border border-zinc-700 bg-zinc-800/80 px-2 py-0.5 text-[11px] font-semibold text-zinc-300">{{ task.timeSpanFormatted || task.timeSpan }}</span>
                                     <span v-if="task.isMonthly" class="rounded-md border border-purple-500/40 bg-purple-500/10 px-2 py-0.5 text-[11px] font-semibold text-purple-300">Bulanan</span>
                                     <span v-else-if="task.isWeekly" class="rounded-md border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[11px] font-semibold text-sky-300">Mingguan</span>
                                     <span v-if="task.postponedCount" class="text-[11px] text-amber-400">Ditunda {{ task.postponedCount }}x</span>
