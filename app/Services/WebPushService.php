@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\PushSubscription;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Minishlink\WebPush\Subscription;
 use Minishlink\WebPush\WebPush;
 use Throwable;
@@ -34,23 +35,53 @@ class WebPushService
 
     public function notifyAdmins(string $title, string $body, string $url, array $options = []): int
     {
-        $subscriptions = PushSubscription::query()->admin()->get();
+        try {
+            if (! Schema::hasTable('push_subscriptions')) {
+                return 0;
+            }
 
-        return $this->sendToSubscriptions($subscriptions, $title, $body, $url, $options);
+            $subscriptions = PushSubscription::query()->admin()->get();
+
+            return $this->sendToSubscriptions($subscriptions, $title, $body, $url, $options);
+        } catch (Throwable $e) {
+            Log::warning('WebPush notifyAdmins failed: '.$e->getMessage());
+
+            return 0;
+        }
     }
 
     public function notifyCleaners(string $title, string $body, string $url, array $options = []): int
     {
-        $subscriptions = PushSubscription::query()->cleaner()->get();
+        try {
+            if (! Schema::hasTable('push_subscriptions')) {
+                return 0;
+            }
 
-        return $this->sendToSubscriptions($subscriptions, $title, $body, $url, $options);
+            $subscriptions = PushSubscription::query()->cleaner()->get();
+
+            return $this->sendToSubscriptions($subscriptions, $title, $body, $url, $options);
+        } catch (Throwable $e) {
+            Log::warning('WebPush notifyCleaners failed: '.$e->getMessage());
+
+            return 0;
+        }
     }
 
     public function notifyAll(string $title, string $body, string $url, array $options = []): int
     {
-        $subscriptions = PushSubscription::query()->get();
+        try {
+            if (! Schema::hasTable('push_subscriptions')) {
+                return 0;
+            }
 
-        return $this->sendToSubscriptions($subscriptions, $title, $body, $url, $options);
+            $subscriptions = PushSubscription::query()->get();
+
+            return $this->sendToSubscriptions($subscriptions, $title, $body, $url, $options);
+        } catch (Throwable $e) {
+            Log::warning('WebPush notifyAll failed: '.$e->getMessage());
+
+            return 0;
+        }
     }
 
     /**

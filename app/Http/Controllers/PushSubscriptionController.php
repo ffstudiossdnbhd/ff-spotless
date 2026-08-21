@@ -7,7 +7,10 @@ use App\Services\MasterAdminSession;
 use App\Services\WebPushService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
+use Throwable;
 
 class PushSubscriptionController extends Controller
 {
@@ -38,25 +41,41 @@ class PushSubscriptionController extends Controller
             $role = 'cleaner';
         }
 
-        $endpointHash = hash('sha256', $validated['endpoint']);
+        try {
+            if (! Schema::hasTable('push_subscriptions')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Push notification table not migrated yet',
+                ], 503);
+            }
 
-        $subscription = PushSubscription::query()->updateOrCreate(
-            ['endpoint_hash' => $endpointHash],
-            [
-                'endpoint' => $validated['endpoint'],
-                'public_key' => $validated['keys']['p256dh'],
-                'auth_token' => $validated['keys']['auth'],
-                'content_encoding' => $validated['content_encoding'] ?? 'aes128gcm',
-                'role' => $role,
-                'user_agent' => substr((string) $request->userAgent(), 0, 500),
-                'last_active_at' => now(),
-            ]
-        );
+            $endpointHash = hash('sha256', $validated['endpoint']);
 
-        return response()->json([
-            'success' => true,
-            'role' => $subscription->role,
-        ]);
+            $subscription = PushSubscription::query()->updateOrCreate(
+                ['endpoint_hash' => $endpointHash],
+                [
+                    'endpoint' => $validated['endpoint'],
+                    'public_key' => $validated['keys']['p256dh'],
+                    'auth_token' => $validated['keys']['auth'],
+                    'content_encoding' => $validated['content_encoding'] ?? 'aes128gcm',
+                    'role' => $role,
+                    'user_agent' => substr((string) $request->userAgent(), 0, 500),
+                    'last_active_at' => now(),
+                ]
+            );
+
+            return response()->json([
+                'success' => true,
+                'role' => $subscription->role,
+            ]);
+        } catch (Throwable $e) {
+            Log::warning('Push subscribe error: '.$e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Subscription failed',
+            ], 500);
+        }
     }
 
     public function unsubscribe(Request $request): JsonResponse
@@ -65,11 +84,17 @@ class PushSubscriptionController extends Controller
             'endpoint' => ['required', 'string', 'max:1000'],
         ]);
 
-        $endpointHash = hash('sha256', $validated['endpoint']);
+        try {
+            if (Schema::hasTable('push_subscriptions')) {
+                $endpointHash = hash('sha256', $validated['endpoint']);
 
-        PushSubscription::query()
-            ->where('endpoint_hash', $endpointHash)
-            ->delete();
+                PushSubscription::query()
+                    ->where('endpoint_hash', $endpointHash)
+                    ->delete();
+            }
+        } catch (Throwable $e) {
+            Log::warning('Push unsubscribe error: '.$e->getMessage());
+        }
 
         return response()->json([
             'success' => true,

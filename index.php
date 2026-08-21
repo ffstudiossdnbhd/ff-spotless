@@ -7,6 +7,16 @@ define('LARAVEL_START', microtime(true));
 
 $applicationRoot = __DIR__;
 
+if (! is_file($applicationRoot.'/vendor/autoload.php')) {
+    if (is_file(dirname(__DIR__).'/vendor/autoload.php')) {
+        $applicationRoot = dirname(__DIR__);
+    } elseif (is_file(dirname(__DIR__).DIRECTORY_SEPARATOR.'ffspotless'.DIRECTORY_SEPARATOR.'vendor/autoload.php')) {
+        $applicationRoot = dirname(__DIR__).DIRECTORY_SEPARATOR.'ffspotless';
+    } elseif (is_file(__DIR__.DIRECTORY_SEPARATOR.'ffspotless'.DIRECTORY_SEPARATOR.'vendor/autoload.php')) {
+        $applicationRoot = __DIR__.DIRECTORY_SEPARATOR.'ffspotless';
+    }
+}
+
 error_reporting(E_ALL);
 ini_set('display_errors', '1');
 
