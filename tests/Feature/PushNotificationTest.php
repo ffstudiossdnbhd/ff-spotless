@@ -152,19 +152,27 @@ class PushNotificationTest extends TestCase
 
         $this->app->instance(WebPushService::class, $mockPush);
 
-        $session = TaskSession::query()->create([
-            'name' => 'Sesi Pagi',
-            'start_time' => '08:00:00',
-            'end_time' => '12:00:00',
+        $session = TaskSession::query()->first();
+        $collection = \App\Models\TaskCollection::query()->where('is_default', true)->first();
+
+        $template = TaskTemplate::query()->create([
+            'task_name' => 'Kemas Bilik',
+            'task_session_id' => $session->id,
+            'task_collection_id' => $collection->id,
+            'applies_to_all_collections' => true,
+            'finish_time' => '12:00:00',
+            'days_of_week' => [1, 2, 3, 4, 5],
             'sort_order' => 1,
             'is_active' => true,
         ]);
 
         $task = DailyChecklist::query()->create([
             'date' => '2026-07-15',
+            'task_template_id' => $template->id,
             'task_name' => 'Kemas Bilik',
-            'session_name' => 'Sesi Pagi',
+            'session_name' => $session->name,
             'task_session_id' => $session->id,
+            'finish_time' => '12:00:00',
             'is_completed' => true,
             'completed_at' => now(),
         ]);
@@ -190,26 +198,26 @@ class PushNotificationTest extends TestCase
 
         $this->app->instance(WebPushService::class, $mockPush);
 
-        $session = TaskSession::query()->create([
-            'name' => 'Sesi Pagi',
-            'start_time' => '08:00:00',
-            'end_time' => '12:00:00',
-            'sort_order' => 1,
-            'is_active' => true,
-        ]);
+        $session = TaskSession::query()->first();
+        $collection = \App\Models\TaskCollection::query()->where('is_default', true)->first();
 
         $template = TaskTemplate::query()->create([
-            'name' => 'Sapu Lantai',
+            'task_name' => 'Sapu Lantai',
             'task_session_id' => $session->id,
+            'task_collection_id' => $collection->id,
+            'applies_to_all_collections' => true,
+            'finish_time' => '12:00:00',
+            'days_of_week' => [1, 2, 3, 4, 5],
             'sort_order' => 1,
             'is_active' => true,
         ]);
 
         $dates = app(OperationalDate::class);
         $materializer = app(ChecklistMaterializer::class);
-        $materializer->catchUpThrough($dates->today());
+        $tasks = $materializer->forDate($dates->today());
 
-        $dailyTask = DailyChecklist::query()->where('task_template_id', $template->id)->firstOrFail();
+        $dailyTask = $tasks->firstWhere('task_template_id', $template->id);
+        $this->assertNotNull($dailyTask);
 
         $completionService = app(TaskCompletionService::class);
         $completionService->completeDaily($dailyTask, '2026-07-15', [], 'Siap semua');
