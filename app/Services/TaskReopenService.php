@@ -19,20 +19,15 @@ class TaskReopenService
     public function __construct(
         private readonly OperationalDate $dates,
         private readonly AuditLogger $audits,
-        private readonly WebPushService $webPush,
     ) {}
 
     public function reopenDaily(DailyChecklist $task, string $reason): void
     {
         $reason = trim($reason);
-        $taskDate = $task->date->toDateString();
-        $taskName = $task->task_name;
 
-        DB::transaction(function () use ($task, $reason, &$taskDate, &$taskName): void {
+        DB::transaction(function () use ($task, $reason): void {
             $locked = DailyChecklist::query()->lockForUpdate()->findOrFail($task->id);
             $today = $this->dates->today();
-            $taskDate = $locked->date->toDateString();
-            $taskName = $locked->task_name;
 
             if (! $locked->is_completed) {
                 throw ValidationException::withMessages(['task' => 'Only completed tasks can be reopened.']);
@@ -65,21 +60,16 @@ class TaskReopenService
                 'completion_note' => null,
             ])->save();
         }, 3);
-
-        $this->notifyCleanersTaskReopened($taskName, $taskDate, $reason);
     }
 
     public function reopenWeekly(WeeklyTaskOccurrence $task, string $reason): void
     {
         $reason = trim($reason);
         $today = $this->dates->today();
-        $taskDate = ($task->completed_on ?? $today)->toDateString();
-        $taskName = $task->task_name;
 
-        DB::transaction(function () use ($task, $reason, &$taskDate, &$taskName, $today): void {
+        DB::transaction(function () use ($task, $reason, $today): void {
             $locked = WeeklyTaskOccurrence::query()->lockForUpdate()->findOrFail($task->id);
             $taskDate = ($locked->completed_on ?? $today)->toDateString();
-            $taskName = $locked->task_name;
 
             if ($locked->status !== 'completed') {
                 throw ValidationException::withMessages(['task' => 'Only completed tasks can be reopened.']);
@@ -113,21 +103,16 @@ class TaskReopenService
                 'completion_note' => null,
             ])->save();
         }, 3);
-
-        $this->notifyCleanersTaskReopened($taskName, $taskDate, $reason);
     }
 
     public function reopenMonthly(MonthlyTaskOccurrence $task, string $reason): void
     {
         $reason = trim($reason);
         $today = $this->dates->today();
-        $taskDate = ($task->completed_on ?? $today)->toDateString();
-        $taskName = $task->task_name;
 
-        DB::transaction(function () use ($task, $reason, &$taskDate, &$taskName, $today): void {
+        DB::transaction(function () use ($task, $reason, $today): void {
             $locked = MonthlyTaskOccurrence::query()->lockForUpdate()->findOrFail($task->id);
             $taskDate = ($locked->completed_on ?? $today)->toDateString();
-            $taskName = $locked->task_name;
 
             if ($locked->status !== 'completed') {
                 throw ValidationException::withMessages(['task' => 'Only completed tasks can be reopened.']);
@@ -161,32 +146,6 @@ class TaskReopenService
                 'completion_note' => null,
             ])->save();
         }, 3);
-
-        $this->notifyCleanersTaskReopened($taskName, $taskDate, $reason);
-    }
-
-    private function notifyCleanersTaskReopened(string $taskName, string $taskDate, string $reason): void
-    {
-        try {
-            $body = "Tugasan \"{$taskName}\" telah dibuka semula. Sebab: {$reason}";
-            $this->webPush->notifyCleaners(
-                '⚠️ Tugasan Dibuka Semula',
-                $body,
-                route('checklist.index', ['date' => $taskDate]),
-                [
-                    'tag' => 'task-reopened-'.md5($taskName.$taskDate.time()),
-                    'data' => [
-                        'date' => $taskDate,
-                        'task_name' => $taskName,
-                    ],
-                ]
-            );
-        } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('Failed to send task reopened push notification', [
-                'error' => $e->getMessage(),
-                'task_name' => $taskName,
-            ]);
-        }
     }
 
     private function invalidateDailyEvidence(DailyChecklist $task, string $reason, $now): int

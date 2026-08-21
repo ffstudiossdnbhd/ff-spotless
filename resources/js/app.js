@@ -1,6 +1,6 @@
 import { createApp, h } from 'vue';
 import { createInertiaApp } from '@inertiajs/vue3';
-import { getPushServiceWorkerRegistration } from './pushServiceWorker';
+import { registerSW } from 'virtual:pwa-register';
 
 const appName = import.meta.env.VITE_APP_NAME || 'FF Spotless';
 
@@ -24,7 +24,10 @@ createInertiaApp({
 });
 
 if ('serviceWorker' in navigator) {
-    getPushServiceWorkerRegistration().catch((error) => {
-        console.warn('Tidak dapat mendaftarkan aplikasi luar talian.', error);
+    registerSW({
+        immediate: true,
+        onRegisterError(error) {
+            console.warn('Tidak dapat mendaftarkan aplikasi luar talian.', error);
+        },
     });
 }

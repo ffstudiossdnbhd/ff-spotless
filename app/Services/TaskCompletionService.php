@@ -26,7 +26,6 @@ class TaskCompletionService
         private readonly ChecklistMaterializer $materializer,
         private readonly EvidenceWatermarker $watermarker,
         private readonly AuditLogger $audits,
-        private readonly WebPushService $webPush,
     ) {}
 
     /**
@@ -81,8 +80,6 @@ class TaskCompletionService
             $this->deleteStored($storedPaths);
             throw $exception;
         }
-
-        $this->checkAndNotifyChecklistCompleted($date);
     }
 
     /**
@@ -141,8 +138,6 @@ class TaskCompletionService
             $this->deleteStored($storedPaths);
             throw $exception;
         }
-
-        $this->checkAndNotifyChecklistCompleted($date);
     }
 
     /**
@@ -200,45 +195,6 @@ class TaskCompletionService
         } catch (Throwable $exception) {
             $this->deleteStored($storedPaths);
             throw $exception;
-        }
-
-        $this->checkAndNotifyChecklistCompleted($date);
-    }
-
-    private function checkAndNotifyChecklistCompleted(string $date): void
-    {
-        try {
-            $targetDate = $this->dates->fromDateString($date);
-            $daily = $this->materializer->forDate($targetDate);
-            $weekly = $this->weekly->forChecklistDate($targetDate);
-            $monthly = $this->monthly->forChecklistDate($targetDate);
-
-            $totalTasks = $daily->count() + $weekly->count() + $monthly->count();
-            if ($totalTasks === 0) {
-                return;
-            }
-
-            $allDailyCompleted = $daily->every(fn (DailyChecklist $task) => (bool) $task->is_completed);
-            $allWeeklyCompleted = $weekly->every(fn (WeeklyTaskOccurrence $occurrence) => $occurrence->status === 'completed');
-            $allMonthlyCompleted = $monthly->every(fn (MonthlyTaskOccurrence $occurrence) => $occurrence->status === 'completed');
-
-            if ($allDailyCompleted && $allWeeklyCompleted && $allMonthlyCompleted) {
-                $formattedDate = $targetDate->format('d/m/Y');
-                $this->webPush->notifyAdmins(
-                    '🎉 Senarai Semak Selesai!',
-                    "Semua tugasan untuk tarikh {$formattedDate} telah diselesaikan sepenuhnya.",
-                    route('checklist.index', ['date' => $date]),
-                    [
-                        'tag' => "checklist-complete-{$date}",
-                        'data' => ['date' => $date],
-                    ]
-                );
-            }
-        } catch (Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('Failed to send checklist completion push notification', [
-                'error' => $e->getMessage(),
-                'date' => $date,
-            ]);
         }
     }
 

@@ -2,7 +2,6 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { router, usePage } from '@inertiajs/vue3';
 import SundayFirstDatePicker from '../Components/SundayFirstDatePicker.vue';
-import PushNotificationToggle from '../Components/PushNotificationToggle.vue';
 
 const props = defineProps({
     mode: { type: String, default: 'welcome' },
@@ -1234,19 +1233,16 @@ function chooseAdminDate(date) {
             <header class="sticky top-0 z-20 border-b border-zinc-800 bg-[#121212]/95 px-5 py-4 backdrop-blur">
                 <div class="flex items-center justify-between">
                     <button type="button" class="cleaner-logout text-sm font-bold" @click="openWelcome">&lt; Log Keluar</button>
-                    <div class="flex items-center gap-2">
-                        <PushNotificationToggle role="cleaner" />
-                        <button type="button" class="theme-toggle rounded-lg border border-zinc-700" :aria-label="themeToggleLabel" :title="themeToggleLabel" @click="toggleTheme">
-                            <svg v-if="theme === 'light'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                                <circle cx="12" cy="12" r="4"></circle>
-                                <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" stroke-linecap="round"></path>
-                            </svg>
-                            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                                <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z" stroke-linejoin="round"></path>
-                            </svg>
-                            <span>{{ theme === 'light' ? 'Light' : 'Dark' }}</span>
-                        </button>
-                    </div>
+                    <button type="button" class="theme-toggle rounded-lg border border-zinc-700" :aria-label="themeToggleLabel" :title="themeToggleLabel" @click="toggleTheme">
+                        <svg v-if="theme === 'light'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                            <circle cx="12" cy="12" r="4"></circle>
+                            <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" stroke-linecap="round"></path>
+                        </svg>
+                        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                            <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z" stroke-linejoin="round"></path>
+                        </svg>
+                        <span>{{ theme === 'light' ? 'Light' : 'Dark' }}</span>
+                    </button>
                 </div>
                 <div class="mt-4 flex items-center gap-3">
                     <button :disabled="busy" class="h-10 w-10 rounded-xl border border-zinc-700" @click="openChecklist(dateOffset(selectedDate, -1))">&lt;</button>
@@ -1334,12 +1330,9 @@ function chooseAdminDate(date) {
 
         <main v-else-if="screen === 'admin'" class="min-h-screen lg:grid lg:grid-cols-[18rem_1fr]">
             <aside class="sticky top-0 hidden h-screen flex-col border-r border-zinc-800 bg-[#121212]/95 px-5 py-6 lg:flex">
-                <div class="flex items-center justify-between">
-                    <div>
-                        <p class="text-xs font-black uppercase tracking-[.2em] text-[#ED4264]">Admin</p>
-                        <h1 class="mt-1 text-xl font-black">FF Spotless</h1>
-                    </div>
-                    <PushNotificationToggle role="admin" />
+                <div>
+                    <p class="text-xs font-black uppercase tracking-[.2em] text-[#ED4264]">Admin</p>
+                    <h1 class="mt-1 text-xl font-black">FF Spotless</h1>
                 </div>
                 <nav class="mt-8 space-y-4" aria-label="Admin navigation">
                     <template v-for="(group, groupIndex) in adminTabGroups" :key="`admin-group-${groupIndex}`">
@@ -1366,28 +1359,25 @@ function chooseAdminDate(date) {
 
             <div class="min-w-0">
                 <header class="sticky top-0 z-30 border-b border-zinc-800 bg-[#121212]/95 px-5 py-4 backdrop-blur lg:hidden">
-                    <div class="flex items-center justify-between gap-3">
-                        <div class="flex items-center gap-3">
-                            <button
-                                type="button"
-                                class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-zinc-700 bg-zinc-900/60 text-zinc-200 transition hover:border-zinc-500 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#ED4264]"
-                                :aria-expanded="mobileNavOpen"
-                                aria-controls="admin-mobile-drawer"
-                                aria-label="Open navigation menu"
-                                @click="mobileNavOpen = true"
-                            >
-                                <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                    <line x1="3" y1="6" x2="21" y2="6"></line>
-                                    <line x1="3" y1="12" x2="21" y2="12"></line>
-                                    <line x1="3" y1="18" x2="21" y2="18"></line>
-                                </svg>
-                            </button>
-                            <div>
-                                <p class="text-xs font-black uppercase tracking-[.2em] text-[#ED4264]">Admin</p>
-                                <h1 class="text-lg font-black">FF Spotless</h1>
-                            </div>
+                    <div class="flex items-center gap-3">
+                        <button
+                            type="button"
+                            class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-zinc-700 bg-zinc-900/60 text-zinc-200 transition hover:border-zinc-500 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#ED4264]"
+                            :aria-expanded="mobileNavOpen"
+                            aria-controls="admin-mobile-drawer"
+                            aria-label="Open navigation menu"
+                            @click="mobileNavOpen = true"
+                        >
+                            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <line x1="3" y1="6" x2="21" y2="6"></line>
+                                <line x1="3" y1="12" x2="21" y2="12"></line>
+                                <line x1="3" y1="18" x2="21" y2="18"></line>
+                            </svg>
+                        </button>
+                        <div>
+                            <p class="text-xs font-black uppercase tracking-[.2em] text-[#ED4264]">Admin</p>
+                            <h1 class="text-lg font-black">FF Spotless</h1>
                         </div>
-                        <PushNotificationToggle role="admin" />
                     </div>
                 </header>
 

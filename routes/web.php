@@ -9,7 +9,6 @@ use App\Http\Controllers\DayAvailabilityController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\EvidenceController;
 use App\Http\Controllers\MonthlyTaskTemplateController;
-use App\Http\Controllers\PushSubscriptionController;
 use App\Http\Controllers\TaskCompletionController;
 use App\Http\Controllers\TaskCollectionController;
 use App\Http\Controllers\TaskCollectionScheduleController;
@@ -20,15 +19,6 @@ use App\Http\Middleware\EnsureMasterAdmin;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', DashboardController::class)->name('home');
-
-// Push notification registration
-Route::get('/push/public-key', [PushSubscriptionController::class, 'publicKey'])->name('push.public-key');
-Route::post('/push/subscribe', [PushSubscriptionController::class, 'subscribe'])
-    ->middleware('throttle:30,1')
-    ->name('push.subscribe');
-Route::post('/push/unsubscribe', [PushSubscriptionController::class, 'unsubscribe'])
-    ->middleware('throttle:30,1')
-    ->name('push.unsubscribe');
 
 // Cleaner access is intentionally anonymous. Write safety remains enforced by
 // CSRF protection, request validation, throttling, and server-side date checks.
@@ -53,7 +43,6 @@ Route::post('/admin/login', [AdminSessionController::class, 'store'])
 Route::middleware(EnsureMasterAdmin::class)->prefix('admin')->name('admin.')->group(function (): void {
     Route::post('/logout', [AdminSessionController::class, 'destroy'])->name('logout');
     Route::get('/', [AdminDashboardController::class, 'index'])->name('index');
-    Route::post('/push/test', [PushSubscriptionController::class, 'test'])->name('push.test');
     Route::post('/public-holidays', [AdminPublicHolidayController::class, 'store'])->name('public-holidays.store');
     Route::patch('/public-holidays/{publicHoliday}', [AdminPublicHolidayController::class, 'update'])->name('public-holidays.update');
     Route::delete('/public-holidays/{publicHoliday}', [AdminPublicHolidayController::class, 'destroy'])->name('public-holidays.destroy');
