@@ -19,6 +19,8 @@ export default defineConfig({
             strategies: 'injectManifest',
             srcDir: 'resources/js',
             filename: 'service-worker.js',
+            buildBase: '/build/',
+            scope: '/',
             injectRegister: null,
             manifest: false,
             includeAssets: [

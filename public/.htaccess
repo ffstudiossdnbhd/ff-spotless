@@ -32,4 +32,8 @@
     <FilesMatch "\.webmanifest$">
         Header set Cache-Control "no-cache"
     </FilesMatch>
+
+    <FilesMatch "^service-worker\.js$">
+        Header set Service-Worker-Allowed "/"
+    </FilesMatch>
 </IfModule>

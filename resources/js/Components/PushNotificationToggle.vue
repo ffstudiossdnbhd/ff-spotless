@@ -166,23 +166,26 @@ async function getServiceWorkerRegistration() {
     }
 
     try {
-        const existing = await navigator.serviceWorker.getRegistration();
-        if (existing && (existing.active || existing.installing || existing.waiting)) {
-            return existing;
+        const existing = await navigator.serviceWorker.getRegistration('/');
+        const registration = existing || await navigator.serviceWorker.register(
+            '/build/service-worker.js',
+            { scope: '/' }
+        );
+
+        if (registration.active) {
+            return registration;
         }
 
-        // Wait for ready with timeout
-        return await Promise.race([
+        await Promise.race([
             navigator.serviceWorker.ready,
-            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000))
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000)),
         ]);
-    } catch {
-        try {
-            return await navigator.serviceWorker.register('/build/service-worker.js', { scope: '/' });
-        } catch (e) {
-            console.warn('Fallback SW registration failed:', e);
-            return null;
-        }
+
+        const readyRegistration = await navigator.serviceWorker.getRegistration('/');
+        return readyRegistration?.active ? readyRegistration : null;
+    } catch (error) {
+        console.warn('Gagal mendaftarkan service worker:', error);
+        return null;
     }
 }
 
