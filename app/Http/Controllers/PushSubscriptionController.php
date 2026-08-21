@@ -50,19 +50,25 @@ class PushSubscriptionController extends Controller
             }
 
             $endpointHash = hash('sha256', $validated['endpoint']);
+            $subscription = PushSubscription::query()->firstOrNew([
+                'endpoint_hash' => $endpointHash,
+            ]);
 
-            $subscription = PushSubscription::query()->updateOrCreate(
-                ['endpoint_hash' => $endpointHash],
-                [
-                    'endpoint' => $validated['endpoint'],
-                    'public_key' => $validated['keys']['p256dh'],
-                    'auth_token' => $validated['keys']['auth'],
-                    'content_encoding' => $validated['content_encoding'] ?? 'aes128gcm',
-                    'role' => $role,
-                    'user_agent' => substr((string) $request->userAgent(), 0, 500),
-                    'last_active_at' => now(),
-                ]
-            );
+            // A browser has one push endpoint. Visiting the anonymous cleaner
+            // screen must not silently demote an admin device subscription.
+            if (! $isAdmin && $subscription->role === 'admin') {
+                $role = 'admin';
+            }
+
+            $subscription->fill([
+                'endpoint' => $validated['endpoint'],
+                'public_key' => $validated['keys']['p256dh'],
+                'auth_token' => $validated['keys']['auth'],
+                'content_encoding' => $validated['content_encoding'] ?? 'aes128gcm',
+                'role' => $role,
+                'user_agent' => substr((string) $request->userAgent(), 0, 500),
+                'last_active_at' => now(),
+            ])->save();
 
             return response()->json([
                 'success' => true,
@@ -101,13 +107,38 @@ class PushSubscriptionController extends Controller
         ]);
     }
 
-    public function test(Request $request, WebPushService $webPush): JsonResponse
+    public function test(WebPushService $webPush): JsonResponse
     {
+        if (! $webPush->isConfigured()) {
+            return response()->json([
+                'success' => false,
+                'sent' => 0,
+                'message' => 'Kunci VAPID belum dikonfigurasi pada pelayan.',
+            ], 503);
+        }
+
+        if (! Schema::hasTable('push_subscriptions')
+            || ! PushSubscription::query()->admin()->exists()) {
+            return response()->json([
+                'success' => false,
+                'sent' => 0,
+                'message' => 'Tiada langganan peranti admin ditemui. Aktifkan notifikasi semasa berada di paparan admin.',
+            ], 409);
+        }
+
         $count = $webPush->notifyAdmins(
             '🔔 Ujian Notifikasi Push',
             'Sistem notifikasi FF Spotless berfungsi dengan jayanya pada peranti anda!',
             route('admin.index')
         );
+
+        if ($count === 0) {
+            return response()->json([
+                'success' => false,
+                'sent' => 0,
+                'message' => 'Penyedia push tidak menerima notifikasi. Semak log pelayan dan pasangan kunci VAPID.',
+            ], 502);
+        }
 
         return response()->json([
             'success' => true,

@@ -35,5 +35,6 @@
 
     <FilesMatch "^service-worker\.js$">
         Header set Service-Worker-Allowed "/"
+        Header set Cache-Control "no-cache"
     </FilesMatch>
 </IfModule>

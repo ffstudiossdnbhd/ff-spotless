@@ -118,6 +118,37 @@ class PushNotificationTest extends TestCase
         ]);
     }
 
+    public function test_anonymous_cleaner_sync_does_not_demote_an_existing_admin_subscription(): void
+    {
+        $endpoint = 'https://fcm.googleapis.com/fcm/send/existing-admin-endpoint';
+
+        PushSubscription::query()->create([
+            'endpoint' => $endpoint,
+            'public_key' => 'existing-public-key',
+            'auth_token' => 'existing-auth-token',
+            'role' => 'admin',
+        ]);
+
+        $response = $this->postJson(route('push.subscribe'), [
+            'endpoint' => $endpoint,
+            'keys' => [
+                'p256dh' => 'refreshed-public-key',
+                'auth' => 'refreshed-auth-token',
+            ],
+            'role' => 'cleaner',
+        ]);
+
+        $response->assertOk()
+            ->assertJson(['success' => true, 'role' => 'admin']);
+
+        $this->assertDatabaseHas('push_subscriptions', [
+            'endpoint_hash' => hash('sha256', $endpoint),
+            'public_key' => 'refreshed-public-key',
+            'auth_token' => 'refreshed-auth-token',
+            'role' => 'admin',
+        ]);
+    }
+
     public function test_user_can_unsubscribe(): void
     {
         PushSubscription::query()->create([
@@ -135,6 +166,48 @@ class PushNotificationTest extends TestCase
 
         $response->assertOk()->assertJson(['success' => true]);
         $this->assertDatabaseCount('push_subscriptions', 0);
+    }
+
+    public function test_admin_push_test_reports_when_no_admin_device_is_subscribed(): void
+    {
+        $this->post(route('admin.login'), [
+            'password' => 'test-admin-secret',
+        ])->assertRedirect(route('admin.index'));
+
+        $response = $this->postJson(route('admin.push.test'));
+
+        $response->assertStatus(409)
+            ->assertJson([
+                'success' => false,
+                'sent' => 0,
+            ]);
+    }
+
+    public function test_admin_push_test_reports_provider_delivery_failure(): void
+    {
+        $this->post(route('admin.login'), [
+            'password' => 'test-admin-secret',
+        ])->assertRedirect(route('admin.index'));
+
+        PushSubscription::query()->create([
+            'endpoint' => 'https://fcm.googleapis.com/fcm/send/admin-delivery-failure',
+            'public_key' => 'public-key',
+            'auth_token' => 'auth-token',
+            'role' => 'admin',
+        ]);
+
+        $mockPush = Mockery::mock(WebPushService::class);
+        $mockPush->shouldReceive('isConfigured')->once()->andReturnTrue();
+        $mockPush->shouldReceive('notifyAdmins')->once()->andReturn(0);
+        $this->app->instance(WebPushService::class, $mockPush);
+
+        $response = $this->postJson(route('admin.push.test'));
+
+        $response->assertStatus(502)
+            ->assertJson([
+                'success' => false,
+                'sent' => 0,
+            ]);
     }
 
     public function test_reopening_task_triggers_push_notification_to_cleaners(): void

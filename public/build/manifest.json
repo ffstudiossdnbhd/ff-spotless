@@ -1,10 +1,4 @@
 {
-  "node_modules/workbox-window/build/workbox-window.prod.es5.mjs": {
-    "file": "assets/workbox-window.prod.es5-Bd17z0YL.js",
-    "name": "workbox-window.prod.es5",
-    "src": "node_modules/workbox-window/build/workbox-window.prod.es5.mjs",
-    "isDynamicEntry": true
-  },
   "resources/css/app.css": {
     "file": "assets/app-Q5tltRkS.css",
     "name": "app",
@@ -15,7 +9,7 @@
     "isEntry": true
   },
   "resources/js/Pages/Dashboard.vue": {
-    "file": "assets/Dashboard-Cr1A1VN0.js",
+    "file": "assets/Dashboard-BhJdp4G3.js",
     "name": "Dashboard",
     "src": "resources/js/Pages/Dashboard.vue",
     "isDynamicEntry": true,
@@ -27,12 +21,11 @@
     ]
   },
   "resources/js/app.js": {
-    "file": "assets/app-B-Z76uJz.js",
+    "file": "assets/app-CUBxSfS3.js",
     "name": "app",
     "src": "resources/js/app.js",
     "isEntry": true,
     "dynamicImports": [
-      "node_modules/workbox-window/build/workbox-window.prod.es5.mjs",
       "resources/js/Pages/Dashboard.vue"
     ]
   }

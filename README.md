@@ -74,9 +74,9 @@ docker compose -f docker-compose.yml up --build -d
 
 ## PWA behavior
 
-The manifest and FF Spotless icons are served from `public/`. The Vite PWA build generates the service worker, which precaches only Vite build output and PWA assets. It deliberately never caches navigation, Inertia, authenticated, or POST responses, so checklist reads and writes always reach the server.
+The manifest and FF Spotless icons are served from `public/`. The Vite PWA build generates the service worker, which precaches only versioned Vite build output. It deliberately never caches navigation, Inertia, authenticated, or POST responses, so checklist reads and writes always reach the server.
 
-The Inertia application registers the Vite-generated service worker and includes the manifest/theme metadata in its root layout. This enables installation only over HTTPS (or `localhost` during development).
+The Inertia application registers the Vite-generated `/service-worker.js` from the site root and includes the manifest/theme metadata in its root layout. Serving the worker at the root lets it control the full application without relying on a hosting-specific `Service-Worker-Allowed` response header. This enables installation only over HTTPS (or `localhost` during development).
 
 ## Checklist operations
 
@@ -109,22 +109,25 @@ npm run build
 ```
 
 Because Hostinger deploys this project through Git, commit the complete
-generated folder with the matching Laravel source:
+generated folder and root service worker with the matching Laravel source:
 
 ```text
 public/build/
+public/service-worker.js
 ```
 
-If you ever deploy with File Manager instead of Git, place that complete folder
-at:
+If you ever deploy with File Manager instead of Git, copy both generated
+artifacts to:
 
 ```text
-public_html/public/build/
+public_html/build/
+public_html/service-worker.js
 ```
 
-Replace the previous `build` folder as a complete folder. Do not copy only
-individual hashed files, because the Vite manifest, CSS, JavaScript chunks, and
-service worker must all come from the same build.
+Replace the previous `build` folder as a complete folder and replace the root
+`service-worker.js` in the same release. Do not copy only individual hashed
+files, because the Vite manifest, CSS, JavaScript chunks, and service worker
+must all come from the same build.
 
 Keep the Laravel application and secrets outside the web root:
 
@@ -149,12 +152,12 @@ npm ci
 npm run build
 ```
 
-Upload or activate the application release and the complete matching
-`public/build` directory together. Only after the release is in place, copy the
-matching contents of `ffspotless/public` to `public_html` in one deployment
-step. Remove no-longer-referenced build files only after the new public files
-are active. This prevents browsers from receiving a new page with an old
-Dashboard chunk or service worker asset.
+Upload or activate the application release, the complete matching
+`public/build` directory, and `public/service-worker.js` together. Only after
+the release is in place, copy the matching contents of `ffspotless/public` to
+`public_html` in one deployment step. Remove no-longer-referenced build files
+only after the new public files are active. This prevents browsers from
+receiving a new page with an old Dashboard chunk or service worker asset.
 
 After uploading an updated application or changing `private/.env`, run from the application directory:
 

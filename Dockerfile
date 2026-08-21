@@ -51,6 +51,7 @@ RUN a2enconf laravel \
 COPY . ./
 COPY --from=vendor /app/vendor ./vendor
 COPY --from=frontend /app/public/build ./public/build
+COPY --from=frontend /app/public/service-worker.js ./public/service-worker.js
 
 RUN mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views bootstrap/cache \
     && chown -R www-data:www-data bootstrap/cache storage

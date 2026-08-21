@@ -100,6 +100,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
+import { getPushServiceWorkerRegistration } from '../pushServiceWorker';
 
 const props = defineProps({
     role: {
@@ -160,33 +161,36 @@ function urlBase64ToUint8Array(base64String) {
     return outputArray;
 }
 
-async function getServiceWorkerRegistration() {
-    if (!('serviceWorker' in navigator)) {
-        return null;
+async function getVapidPublicKey() {
+    const response = await fetch('/push/public-key', {
+        headers: { 'Accept': 'application/json' },
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+        throw new Error(data.message || `Kunci notifikasi tidak dapat dimuatkan (${response.status}).`);
     }
 
-    try {
-        const existing = await navigator.serviceWorker.getRegistration('/');
-        const registration = existing || await navigator.serviceWorker.register(
-            '/build/service-worker.js',
-            { scope: '/' }
-        );
-
-        if (registration.active) {
-            return registration;
-        }
-
-        await Promise.race([
-            navigator.serviceWorker.ready,
-            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000)),
-        ]);
-
-        const readyRegistration = await navigator.serviceWorker.getRegistration('/');
-        return readyRegistration?.active ? readyRegistration : null;
-    } catch (error) {
-        console.warn('Gagal mendaftarkan service worker:', error);
-        return null;
+    if (!data.configured || !data.publicKey) {
+        throw new Error('Kunci VAPID belum dikonfigurasi pada pelayan.');
     }
+
+    return data.publicKey;
+}
+
+function subscriptionUsesPublicKey(subscription, publicKey) {
+    const currentKey = subscription.options?.applicationServerKey;
+    if (!currentKey) {
+        return true;
+    }
+
+    const current = currentKey instanceof ArrayBuffer
+        ? new Uint8Array(currentKey)
+        : new Uint8Array(currentKey.buffer, currentKey.byteOffset, currentKey.byteLength);
+    const expected = urlBase64ToUint8Array(publicKey);
+
+    return current.length === expected.length
+        && current.every((value, index) => value === expected[index]);
 }
 
 async function syncSubscription() {
@@ -204,16 +208,23 @@ async function syncSubscription() {
             return;
         }
 
-        const registration = await getServiceWorkerRegistration();
-        if (!registration) {
+        const registration = await getPushServiceWorkerRegistration();
+
+        const subscription = await registration.pushManager.getSubscription();
+        if (!subscription) {
+            isSubscribed.value = false;
             return;
         }
 
-        const subscription = await registration.pushManager.getSubscription();
-        isSubscribed.value = !!subscription;
+        if (Notification.permission === 'granted') {
+            const publicKey = await getVapidPublicKey();
+            isSubscribed.value = subscriptionUsesPublicKey(subscription, publicKey);
 
-        // If currently subscribed, silently keep the server updated with current role
-        if (subscription && Notification.permission === 'granted') {
+            if (!isSubscribed.value) {
+                return;
+            }
+
+            // Silently refresh last activity and the authenticated audience role.
             await saveSubscriptionToServer(subscription).catch(() => {});
         }
     } catch (e) {
@@ -278,21 +289,26 @@ async function subscribe() {
         return;
     }
 
-    const keyRes = await fetch('/push/public-key', {
-        headers: { 'Accept': 'application/json' },
-    });
-    const keyData = await keyRes.json();
+    const publicKey = await getVapidPublicKey();
+    const registration = await getPushServiceWorkerRegistration();
+    const existingSubscription = await registration.pushManager.getSubscription();
 
-    if (!keyData.publicKey) {
-        throw new Error('Kunci VAPID belum dikonfigurasi dalam .env');
+    if (existingSubscription) {
+        if (subscriptionUsesPublicKey(existingSubscription, publicKey)) {
+            await saveSubscriptionToServer(existingSubscription);
+            isSubscribed.value = true;
+            showToast('Notifikasi push berjaya diaktifkan! 🎉', 'success');
+            return;
+        }
+
+        await removeSubscriptionFromServer(existingSubscription).catch(() => {});
+        const removed = await existingSubscription.unsubscribe();
+        if (!removed) {
+            throw new Error('Langganan lama tidak dapat diperbaharui. Cuba semula selepas memuat semula halaman.');
+        }
     }
 
-    const registration = await getServiceWorkerRegistration();
-    if (!registration) {
-        throw new Error('Service worker belum sedia.');
-    }
-
-    const convertedVapidKey = urlBase64ToUint8Array(keyData.publicKey);
+    const convertedVapidKey = urlBase64ToUint8Array(publicKey);
 
     const subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
@@ -304,26 +320,33 @@ async function subscribe() {
     showToast('Notifikasi push berjaya diaktifkan! 🎉', 'success');
 }
 
+async function removeSubscriptionFromServer(subscription) {
+    const token = getCsrfToken();
+    const response = await fetch('/push/unsubscribe', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': token,
+            'X-XSRF-TOKEN': token,
+            'Accept': 'application/json',
+        },
+        body: JSON.stringify({
+            endpoint: subscription.endpoint,
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Langganan tidak dapat dipadamkan dari pelayan (${response.status}).`);
+    }
+}
+
 async function unsubscribe() {
-    const registration = await getServiceWorkerRegistration();
-    if (!registration) return;
+    const registration = await getPushServiceWorkerRegistration();
 
     const subscription = await registration.pushManager.getSubscription();
     if (subscription) {
         try {
-            const token = getCsrfToken();
-            await fetch('/push/unsubscribe', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRF-TOKEN': token,
-                    'X-XSRF-TOKEN': token,
-                    'Accept': 'application/json',
-                },
-                body: JSON.stringify({
-                    endpoint: subscription.endpoint,
-                }),
-            });
+            await removeSubscriptionFromServer(subscription);
         } catch (e) {
             console.warn('Gagal memadam langganan dari pelayan:', e);
         }
