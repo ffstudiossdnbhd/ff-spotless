@@ -1747,7 +1747,6 @@ function chooseAdminDate(date) {
                                     <span class="w-7 text-center font-black text-zinc-500">{{ index + 1 }}</span>
                                     <div>
                                         <strong class="text-base text-zinc-100">{{ session.name }}</strong>
-                                        <p class="text-xs text-zinc-500 mt-0.5">{{ sessionTasks(session.id).length }} task{{ sessionTasks(session.id).length === 1 ? '' : 's' }} assigned</p>
                                     </div>
                                 </div>
                                 <div class="flex items-center gap-2">
