@@ -1,5 +1,5 @@
 <template>
-    <div v-if="isSupported" class="relative inline-flex items-center">
+    <div v-if="isSupported" class="relative inline-flex items-center gap-2">
         <!-- Main Toggle Button -->
         <button
             type="button"
@@ -8,10 +8,10 @@
             class="group relative inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2"
             :class="[
                 isSubscribed
-                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 hover:bg-emerald-500/20 focus:ring-emerald-500'
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/20 focus:ring-emerald-500'
                     : permissionState === 'denied'
-                        ? 'bg-stone-100 border-stone-200 text-stone-400 cursor-not-allowed'
-                        : 'bg-white border-stone-300 text-stone-700 hover:bg-stone-50 hover:border-stone-400 focus:ring-stone-400 shadow-xs'
+                        ? 'bg-stone-800/40 border-stone-700 text-stone-500 cursor-not-allowed'
+                        : 'bg-zinc-900 border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:border-zinc-500 hover:text-white focus:ring-zinc-500 shadow-xs'
             ]"
             :title="buttonTitle"
         >
@@ -31,7 +31,7 @@
             <svg
                 v-else-if="isSubscribed"
                 xmlns="http://www.w3.org/2000/svg"
-                class="h-3.5 w-3.5 text-emerald-600 animate-pulse"
+                class="h-3.5 w-3.5 text-emerald-500"
                 viewBox="0 0 20 20"
                 fill="currentColor"
             >
@@ -42,7 +42,7 @@
             <svg
                 v-else
                 xmlns="http://www.w3.org/2000/svg"
-                class="h-3.5 w-3.5 text-stone-500 group-hover:text-stone-700"
+                class="h-3.5 w-3.5 text-zinc-400 group-hover:text-zinc-200"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -59,6 +59,19 @@
             </span>
         </button>
 
+        <!-- Test Push Button (For Admins when subscribed) -->
+        <button
+            v-if="props.role === 'admin' && isSubscribed"
+            type="button"
+            :disabled="isTesting"
+            @click="sendTestNotification"
+            class="px-2.5 py-1 text-xs font-semibold rounded-full border border-zinc-700 bg-zinc-800/80 text-zinc-300 hover:border-zinc-500 hover:text-white transition disabled:opacity-50 shadow-xs"
+            title="Hantar notifikasi ujian ke peranti admin"
+        >
+            <span v-if="isTesting">Menguji...</span>
+            <span v-else>Uji Push</span>
+        </button>
+
         <!-- Toast Feedback -->
         <transition
             enter-active-class="transition ease-out duration-200"
@@ -70,8 +83,14 @@
         >
             <div
                 v-if="toastMessage"
-                class="absolute top-full mt-1.5 right-0 z-50 px-3 py-1.5 text-xs rounded-lg shadow-lg font-medium whitespace-nowrap"
-                :class="toastType === 'error' ? 'bg-rose-600 text-white' : 'bg-stone-900 text-white'"
+                class="absolute top-full mt-1.5 right-0 z-50 px-3 py-1.5 text-xs rounded-lg shadow-xl font-medium whitespace-nowrap border"
+                :class="[
+                    toastType === 'error'
+                        ? 'bg-rose-950 border-rose-700 text-rose-200'
+                        : toastType === 'success'
+                            ? 'bg-emerald-950 border-emerald-700 text-emerald-200'
+                            : 'bg-zinc-900 border-zinc-700 text-zinc-200'
+                ]"
             >
                 {{ toastMessage }}
             </div>
@@ -92,6 +111,7 @@ const props = defineProps({
 const isSupported = ref(false);
 const isSubscribed = ref(false);
 const isProcessing = ref(false);
+const isTesting = ref(false);
 const permissionState = ref('default');
 const toastMessage = ref('');
 const toastType = ref('info');
@@ -103,7 +123,7 @@ function showToast(message, type = 'info') {
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
         toastMessage.value = '';
-    }, 4000);
+    }, 4500);
 }
 
 const buttonTitle = computed(() => {
@@ -115,6 +135,15 @@ const buttonTitle = computed(() => {
     }
     return 'Klik untuk menerima notifikasi push untuk kemas kini senarai semak.';
 });
+
+function getCsrfToken() {
+    const metaTag = document.querySelector('meta[name="csrf-token"]');
+    if (metaTag && metaTag.getAttribute('content')) {
+        return metaTag.getAttribute('content');
+    }
+    const cookieMatch = document.cookie.match(/(^|;)\s*XSRF-TOKEN\s*=\s*([^;]+)/);
+    return cookieMatch ? decodeURIComponent(cookieMatch[2]) : '';
+}
 
 function urlBase64ToUint8Array(base64String) {
     const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -135,7 +164,26 @@ async function getServiceWorkerRegistration() {
     if (!('serviceWorker' in navigator)) {
         return null;
     }
-    return await navigator.serviceWorker.ready;
+
+    try {
+        const existing = await navigator.serviceWorker.getRegistration();
+        if (existing && (existing.active || existing.installing || existing.waiting)) {
+            return existing;
+        }
+
+        // Wait for ready with timeout
+        return await Promise.race([
+            navigator.serviceWorker.ready,
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000))
+        ]);
+    } catch {
+        try {
+            return await navigator.serviceWorker.register('/build/service-worker.js', { scope: '/' });
+        } catch (e) {
+            console.warn('Fallback SW registration failed:', e);
+            return null;
+        }
+    }
 }
 
 async function syncSubscription() {
@@ -161,9 +209,9 @@ async function syncSubscription() {
         const subscription = await registration.pushManager.getSubscription();
         isSubscribed.value = !!subscription;
 
-        // If currently subscribed, keep the server updated with current role
+        // If currently subscribed, silently keep the server updated with current role
         if (subscription && Notification.permission === 'granted') {
-            await saveSubscriptionToServer(subscription);
+            await saveSubscriptionToServer(subscription).catch(() => {});
         }
     } catch (e) {
         console.warn('Gagal menyemak status langganan notifikasi push:', e);
@@ -172,11 +220,14 @@ async function syncSubscription() {
 
 async function saveSubscriptionToServer(subscription) {
     const rawSub = subscription.toJSON();
-    await fetch('/push/subscribe', {
+    const token = getCsrfToken();
+
+    const response = await fetch('/push/subscribe', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+            'X-CSRF-TOKEN': token,
+            'X-XSRF-TOKEN': token,
             'Accept': 'application/json',
         },
         body: JSON.stringify({
@@ -186,6 +237,13 @@ async function saveSubscriptionToServer(subscription) {
             role: props.role,
         }),
     });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) {
+        throw new Error(data.message || `Ralat pelayan (${response.status})`);
+    }
+
+    return data;
 }
 
 async function toggleSubscription() {
@@ -200,7 +258,7 @@ async function toggleSubscription() {
         }
     } catch (err) {
         console.error('Ralat mengemas kini notifikasi:', err);
-        showToast('Ralat mengemas kini notifikasi push.', 'error');
+        showToast(err.message || 'Ralat mengemas kini notifikasi push.', 'error');
     } finally {
         isProcessing.value = false;
     }
@@ -223,14 +281,12 @@ async function subscribe() {
     const keyData = await keyRes.json();
 
     if (!keyData.publicKey) {
-        showToast('Kunci VAPID tidak dikonfigurasi pada pelayan.', 'error');
-        return;
+        throw new Error('Kunci VAPID belum dikonfigurasi dalam .env');
     }
 
     const registration = await getServiceWorkerRegistration();
     if (!registration) {
-        showToast('Service worker belum bersedia.', 'error');
-        return;
+        throw new Error('Service worker belum sedia.');
     }
 
     const convertedVapidKey = urlBase64ToUint8Array(keyData.publicKey);
@@ -242,7 +298,7 @@ async function subscribe() {
 
     await saveSubscriptionToServer(subscription);
     isSubscribed.value = true;
-    showToast('Notifikasi push berjaya diaktifkan! 🎉', 'info');
+    showToast('Notifikasi push berjaya diaktifkan! 🎉', 'success');
 }
 
 async function unsubscribe() {
@@ -252,11 +308,13 @@ async function unsubscribe() {
     const subscription = await registration.pushManager.getSubscription();
     if (subscription) {
         try {
+            const token = getCsrfToken();
             await fetch('/push/unsubscribe', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+                    'X-CSRF-TOKEN': token,
+                    'X-XSRF-TOKEN': token,
                     'Accept': 'application/json',
                 },
                 body: JSON.stringify({
@@ -272,6 +330,35 @@ async function unsubscribe() {
 
     isSubscribed.value = false;
     showToast('Notifikasi push telah dinyahaktifkan.', 'info');
+}
+
+async function sendTestNotification() {
+    if (isTesting.value) return;
+    isTesting.value = true;
+
+    try {
+        const token = getCsrfToken();
+        const res = await fetch('/admin/push/test', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': token,
+                'X-XSRF-TOKEN': token,
+                'Accept': 'application/json',
+            },
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.success) {
+            showToast(`Ujian dihantar (${data.sent} peranti)`, 'success');
+        } else {
+            showToast(data.message || 'Gagal menghantar ujian notifikasi.', 'error');
+        }
+    } catch (e) {
+        showToast('Ralat sambungan.', 'error');
+    } finally {
+        isTesting.value = false;
+    }
 }
 
 onMounted(() => {
