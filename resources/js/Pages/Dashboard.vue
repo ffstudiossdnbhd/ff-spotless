@@ -821,6 +821,7 @@ function openAdmin(date = null, options = {}) {
 
     router.get('/admin', data, {
         preserveScroll: true,
+        preserveState: true,
         onStart: () => busy.value = true,
         onSuccess: () => {
             screen.value = 'admin';
