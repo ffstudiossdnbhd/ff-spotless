@@ -1,0 +1,219 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\DailyChecklist;
+use App\Models\PushSubscription;
+use App\Models\TaskSession;
+use App\Models\TaskTemplate;
+use App\Services\ChecklistMaterializer;
+use App\Services\OperationalDate;
+use App\Services\TaskCompletionService;
+use App\Services\TaskReopenService;
+use App\Services\WebPushService;
+use Carbon\CarbonImmutable;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Mockery;
+use Tests\TestCase;
+
+class PushNotificationTest extends TestCase
+{
+    use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config()->set('checklist.timezone', 'Asia/Kuala_Lumpur');
+        config()->set('checklist.admin_password', 'test-admin-secret');
+        config()->set('webpush.vapid.public_key', 'test-vapid-public-key');
+        config()->set('webpush.vapid.private_key', 'test-vapid-private-key');
+        config()->set('webpush.vapid.subject', 'mailto:admin@ffspotless.test');
+
+        CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-07-15 09:00:00', 'Asia/Kuala_Lumpur'));
+        $this->withoutMiddleware(\Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class);
+        $this->withoutMiddleware(\Illuminate\Foundation\Http\Middleware\PreventRequestForgery::class);
+    }
+
+    protected function tearDown(): void
+    {
+        CarbonImmutable::setTestNow();
+        parent::tearDown();
+    }
+
+    public function test_public_key_endpoint_returns_vapid_key(): void
+    {
+        $response = $this->getJson(route('push.public-key'));
+
+        $response->assertOk()
+            ->assertJson([
+                'publicKey' => 'test-vapid-public-key',
+                'configured' => true,
+            ]);
+    }
+
+    public function test_cleaner_can_subscribe_to_push_notifications(): void
+    {
+        $response = $this->postJson(route('push.subscribe'), [
+            'endpoint' => 'https://fcm.googleapis.com/fcm/send/test-endpoint-cleaner-1',
+            'keys' => [
+                'p256dh' => 'BNcRdreALRF8M+Ut5RThKgwhQgTqdMGoqVbFLQgID3VJUK2D1mRV_3Jg',
+                'auth' => 'tBHItJI5svbpez7KI4CCXg',
+            ],
+            'role' => 'cleaner',
+        ]);
+
+        $response->assertOk()
+            ->assertJson(['success' => true, 'role' => 'cleaner']);
+
+        $this->assertDatabaseHas('push_subscriptions', [
+            'endpoint_hash' => hash('sha256', 'https://fcm.googleapis.com/fcm/send/test-endpoint-cleaner-1'),
+            'role' => 'cleaner',
+        ]);
+    }
+
+    public function test_unauthenticated_user_cannot_claim_admin_role_subscription(): void
+    {
+        // When not authenticated as admin, requesting 'admin' role automatically falls back to 'cleaner'
+        $response = $this->postJson(route('push.subscribe'), [
+            'endpoint' => 'https://fcm.googleapis.com/fcm/send/test-endpoint-cleaner-2',
+            'keys' => [
+                'p256dh' => 'BNcRdreALRF8M+Ut5RThKgwhQgTqdMGoqVbFLQgID3VJUK2D1mRV_3Jg',
+                'auth' => 'tBHItJI5svbpez7KI4CCXg',
+            ],
+            'role' => 'admin',
+        ]);
+
+        $response->assertOk()
+            ->assertJson(['success' => true, 'role' => 'cleaner']);
+
+        $this->assertDatabaseHas('push_subscriptions', [
+            'endpoint_hash' => hash('sha256', 'https://fcm.googleapis.com/fcm/send/test-endpoint-cleaner-2'),
+            'role' => 'cleaner',
+        ]);
+    }
+
+    public function test_admin_can_subscribe_as_admin_role_when_authenticated(): void
+    {
+        $loginResponse = $this->post(route('admin.login'), [
+            'password' => 'test-admin-secret',
+        ]);
+        $loginResponse->assertRedirect(route('admin.index'));
+
+        $response = $this->postJson(route('push.subscribe'), [
+            'endpoint' => 'https://fcm.googleapis.com/fcm/send/test-endpoint-admin-1',
+            'keys' => [
+                'p256dh' => 'BNcRdreALRF8M+Ut5RThKgwhQgTqdMGoqVbFLQgID3VJUK2D1mRV_3Jg',
+                'auth' => 'tBHItJI5svbpez7KI4CCXg',
+            ],
+            'role' => 'admin',
+        ]);
+
+        $response->assertOk()
+            ->assertJson(['success' => true, 'role' => 'admin']);
+
+        $this->assertDatabaseHas('push_subscriptions', [
+            'endpoint_hash' => hash('sha256', 'https://fcm.googleapis.com/fcm/send/test-endpoint-admin-1'),
+            'role' => 'admin',
+        ]);
+    }
+
+    public function test_user_can_unsubscribe(): void
+    {
+        PushSubscription::query()->create([
+            'endpoint' => 'https://fcm.googleapis.com/fcm/send/test-endpoint-to-remove',
+            'public_key' => 'pubkey',
+            'auth_token' => 'auth',
+            'role' => 'cleaner',
+        ]);
+
+        $this->assertDatabaseCount('push_subscriptions', 1);
+
+        $response = $this->postJson(route('push.unsubscribe'), [
+            'endpoint' => 'https://fcm.googleapis.com/fcm/send/test-endpoint-to-remove',
+        ]);
+
+        $response->assertOk()->assertJson(['success' => true]);
+        $this->assertDatabaseCount('push_subscriptions', 0);
+    }
+
+    public function test_reopening_task_triggers_push_notification_to_cleaners(): void
+    {
+        $mockPush = Mockery::mock(WebPushService::class);
+        $mockPush->shouldReceive('notifyCleaners')
+            ->once()
+            ->with(
+                '⚠️ Tugasan Dibuka Semula',
+                Mockery::pattern('/Tugasan "Kemas Bilik" telah dibuka semula. Sebab: Perlu dilap sekali lagi/'),
+                Mockery::pattern('/date=2026-07-15/'),
+                Mockery::type('array')
+            )
+            ->andReturn(1);
+
+        $this->app->instance(WebPushService::class, $mockPush);
+
+        $session = TaskSession::query()->create([
+            'name' => 'Sesi Pagi',
+            'start_time' => '08:00:00',
+            'end_time' => '12:00:00',
+            'sort_order' => 1,
+            'is_active' => true,
+        ]);
+
+        $task = DailyChecklist::query()->create([
+            'date' => '2026-07-15',
+            'task_name' => 'Kemas Bilik',
+            'session_name' => 'Sesi Pagi',
+            'task_session_id' => $session->id,
+            'is_completed' => true,
+            'completed_at' => now(),
+        ]);
+
+        $reopenService = app(TaskReopenService::class);
+        $reopenService->reopenDaily($task, 'Perlu dilap sekali lagi');
+
+        $this->assertFalse($task->fresh()->is_completed);
+    }
+
+    public function test_completing_final_task_triggers_push_notification_to_admins(): void
+    {
+        $mockPush = Mockery::mock(WebPushService::class);
+        $mockPush->shouldReceive('notifyAdmins')
+            ->once()
+            ->with(
+                '🎉 Senarai Semak Selesai!',
+                Mockery::pattern('/Semua tugasan untuk tarikh 15\/07\/2026 telah diselesaikan/'),
+                Mockery::pattern('/date=2026-07-15/'),
+                Mockery::type('array')
+            )
+            ->andReturn(1);
+
+        $this->app->instance(WebPushService::class, $mockPush);
+
+        $session = TaskSession::query()->create([
+            'name' => 'Sesi Pagi',
+            'start_time' => '08:00:00',
+            'end_time' => '12:00:00',
+            'sort_order' => 1,
+            'is_active' => true,
+        ]);
+
+        $template = TaskTemplate::query()->create([
+            'name' => 'Sapu Lantai',
+            'task_session_id' => $session->id,
+            'sort_order' => 1,
+            'is_active' => true,
+        ]);
+
+        $dates = app(OperationalDate::class);
+        $materializer = app(ChecklistMaterializer::class);
+        $materializer->catchUpThrough($dates->today());
+
+        $dailyTask = DailyChecklist::query()->where('task_template_id', $template->id)->firstOrFail();
+
+        $completionService = app(TaskCompletionService::class);
+        $completionService->completeDaily($dailyTask, '2026-07-15', [], 'Siap semua');
+
+        $this->assertTrue($dailyTask->fresh()->is_completed);
+    }
+}
